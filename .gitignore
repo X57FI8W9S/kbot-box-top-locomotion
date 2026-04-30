@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+.venv/
+logs/
+wandb/
+*.egg-info/
+
+# External simulator checkout / generated runtime state
+isaac_lab/
+outputs/
+screenshots/
+.codex
+
+# Python / packaging
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# RL artifacts
+*.pt
+*.onnx
+*.mp4
+*.avi
+*.mov
+events.out.tfevents.*
+
+# Local OS/editor files
+.DS_Store
+.idea/
+.vscode/
