@@ -6,6 +6,7 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as base_mdp
@@ -274,6 +275,92 @@ class KBotForwardFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
 
 @configclass
 class KBotForwardFlatEnvCfg_PLAY(KBotForwardFlatEnvCfg):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.commands.base_velocity.resampling_time_range = (10.0, 10.0)
+        self.episode_length_s = 60.0
+
+
+@configclass
+class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
+    """V2 clean-walk restart with fewer overlapping reward pressures.
+
+    Diagnostics and checkpoint selection are handled outside the reward function.
+    The reward still includes explicit long-window hip-roll pressure because the
+    v1 failure mode was a persistent hip/box roll bias over several gait cycles.
+    """
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.commands.base_velocity.ranges.lin_vel_x = (0.30, 0.50)
+        self.commands.base_velocity.resampling_time_range = (4.0, 8.0)
+
+        self.rewards.track_lin_vel_xy_exp.weight = 3.0
+        self.rewards.track_ang_vel_z_exp.weight = 3.0
+        self.rewards.feet_air_time.weight = 1.25
+        self.rewards.alternating_foot_phase.weight = 0.25
+        self.rewards.upright_alive = RewTerm(
+            func=mdp.upright_alive,
+            weight=2.0,
+            params={"minimum_height": 0.55, "max_tilt": 0.45},
+        )
+
+        self.rewards.flat_orientation_l2.weight = -15.0
+        self.rewards.lateral_velocity_l2.weight = -5.0
+        self.rewards.yaw_rate_l2.weight = -5.0
+        self.rewards.world_heading_l2.weight = -20.0
+        self.rewards.root_lateral_tilt_l2.weight = -70.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -350.0
+        self.rewards.root_lateral_tilt_ema_l2.params["tau_s"] = 2.5
+
+        self.rewards.forward_velocity_below_l2.weight = -16.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.25
+        self.rewards.foot_lateral_spacing_l1.weight = -5.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -20.0
+        self.rewards.foot_lateral_lane_l1.weight = -5.0
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.04
+        self.rewards.foot_lateral_lane_max_l1.weight = 0.0
+
+        self.rewards.leg_frontal_plane_l1.weight = -4.0
+        self.rewards.leg_frontal_plane_l1.params["tolerance"] = 0.04
+        self.rewards.left_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.right_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.max_leg_frontal_plane_l1.weight = 0.0
+
+        self.rewards.foot_sagittal_separation_l1.weight = -3.0
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.22
+        self.rewards.swing_foot_overtake_l1.weight = -10.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.18
+        self.rewards.foot_parallel_l2.weight = -1.0
+        self.rewards.foot_toe_in_l2.weight = -6.0
+        self.rewards.foot_flat_l2.weight = -0.35
+        self.rewards.stance_foot_flat_l2.weight = -2.0
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -8.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -24.0
+        self.rewards.hip_roll_yaw_position_ema_l2.params["tau_s"] = 2.5
+        self.rewards.hip_roll_position_ema_5cycle_l2 = RewTerm(
+            func=mdp.joint_position_ema_l2,
+            weight=-90.0,
+            params={"tau_s": 5.0, "asset_cfg": SceneEntityCfg("robot", joint_names=[".*hip_roll.*"])},
+        )
+
+        self.rewards.low_body_l2.weight = -40.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.50
+        self.rewards.knee_extension_l1.weight = -18.0
+        self.rewards.knee_extension_l1.params["min_bend"] = 0.35
+
+        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.42})
+        self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.95})
+
+
+@configclass
+class KBotForwardFlatV2EnvCfg_PLAY(KBotForwardFlatV2EnvCfg):
     def __post_init__(self) -> None:
         super().__post_init__()
         self.scene.num_envs = 16
