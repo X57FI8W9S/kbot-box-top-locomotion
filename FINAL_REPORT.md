@@ -1,12 +1,14 @@
 # KBot Box-Top Locomotion Final Report
 
-This report is a handoff for restarting the walking policy from a cleaner design. It records what this repository does, how the reward function evolved, what each training branch taught us, and what I would change when rebuilding the task.
+This report is a handoff for restarting the walking policy from a cleaner design. It records what this repository does, how the reward function evolved, what each training branch showed, and what should be changed when rebuilding the task.
 
 ## 1. What This Code Does
 
 ### Goal
 
 The project trains a simulated biped robot with a large box-like upper body to walk forward on flat ground in Isaac Lab using PPO from RSL-RL.
+
+The box top replaces the torso and arms because arm control is out of scope for this phase. The intended product is not this exact simplified robot. The intended product is a reusable training procedure that can later be adapted to a true humanoid with arms, more actuators, richer contacts, perception, recovery, and navigation.
 
 The task is registered as:
 
@@ -15,7 +17,7 @@ Isaac-KBot-Forward-Flat-v0
 Isaac-KBot-Forward-Flat-Play-v0
 ```
 
-The robot is intentionally awkward: a high, wide, box-top body on two legs. That makes lateral balance, hip compensation, and foot contact quality the important problems, not just forward velocity.
+Any awkwardness in the current behavior is unintentional. It is likely caused by the simplified body, limited actuation, reward design, and contact modeling. The simplification is still useful because it makes the first locomotion problem easier and cheaper to train than a full humanoid while preserving the main balance problem: a top-heavy body walking on two legs.
 
 ### Main Files
 
@@ -59,6 +61,8 @@ right knee: -0.75 rad
 other joints: 0.0 rad
 ```
 
+This initial pose is the current value in `source/kbot_loco/kbot_loco/tasks/locomotion/assets.py`. It should be treated as the current engineering baseline, not as a proven optimal standing pose.
+
 Actuator groups:
 
 ```text
@@ -67,6 +71,8 @@ hip roll:         effort 60,  stiffness 35, damping 3
 hip yaw:          effort 60,  stiffness 25, damping 2
 ankle:            effort 17,  stiffness 12, damping 1
 ```
+
+These actuator groups also come from `assets.py`. They were read from the current repository configuration for this report. They should be treated as part of the experiment setup, not as final motor-identification results. Units are Isaac Lab actuator config units: effort limits are torque limits in N*m for revolute joints, velocity limits are rad/s, stiffness is N*m/rad, and damping is N*m*s/rad.
 
 The policy action is joint position control with:
 
@@ -131,9 +137,9 @@ Final training command distribution:
 
 ```text
 forward velocity x: 0.35 to 0.55 m/s
-lateral velocity y: 0.0
-yaw velocity z: 0.0
-heading: 0.0
+lateral velocity y: 0.0 m/s
+yaw velocity z: 0.0 rad/s
+heading: 0.0 rad
 resampling time: 4.0 to 8.0 s
 ```
 
@@ -155,7 +161,8 @@ reset root pose:
   x/y: -0.1 to 0.1 m
   yaw: -0.1 to 0.1 rad
 reset root velocity:
-  xyz small
+  x/y: -0.05 to 0.05 m/s
+  z: -0.02 to 0.02 m/s
   roll/pitch/yaw: -0.05 to 0.05 rad/s
 joint reset multiplier: 0.95 to 1.05
 ```
@@ -169,62 +176,153 @@ The final reward is a weighted sum of Isaac Lab base terms and custom KBot terms
 Final reward terms:
 
 ```text
-track_lin_vel_xy_exp                 +3.0
-track_ang_vel_z_exp                  +3.5
-alive                                +2.0
-feet_air_time                        +1.75
-alternating_foot_phase               +0.35
-
-lin_vel_z_l2                         -2.0
-ang_vel_xy_l2                        -0.25
-dof_torques_l2                       -5e-5
-dof_acc_l2                           -1e-7
-action_rate_l2                       -0.08
-undesired_contacts                   -2.0
-flat_orientation_l2                  -20.0
-dof_pos_limits                       -2.0
-base_height_l2                       -20.0
-lateral_velocity_l2                  -7.0
-yaw_rate_l2                          -7.0
-root_lateral_tilt_l2                 -90.0
-root_lateral_tilt_ema_l2             -450.0
-world_heading_l2                     -32.0
-backward_velocity_l2                 -2.0
-forward_velocity_below_l2            -20.0
-foot_lateral_spacing_l1              -6.0
-foot_signed_lateral_clearance_l1     -20.0
-foot_lateral_lane_l1                 -7.0
-foot_lateral_lane_max_l1             -5.0
-leg_frontal_plane_l1                 -7.0
-left_leg_frontal_plane_l1            -2.0
-right_leg_frontal_plane_l1           -2.0
-max_leg_frontal_plane_l1             -8.0
-foot_sagittal_separation_l1          -4.0
-swing_foot_overtake_l1               -14.0
-foot_parallel_l2                     -1.5
-foot_world_parallel_l2                0.0
-foot_world_parallel_max_l2            0.0
-foot_toe_in_l2                       -8.0
-foot_flat_l2                         -0.35
-stance_foot_flat_l2                  -2.5
-wobble_joint_vel_l2                  -0.04
-hip_roll_yaw_position_l2             -12.0
-hip_roll_yaw_position_ema_l2         -36.0
-low_body_l2                          -30.0
-knee_extension_l1                    -30.0
-termination_penalty                  -500.0
+ 0  track_lin_vel_xy_exp                 +3.0
+ 1  track_ang_vel_z_exp                  +3.5
+ 2  lin_vel_z_l2                         -2.0
+ 3  ang_vel_xy_l2                        -0.25
+ 4  dof_torques_l2                       -5e-5
+ 5  dof_acc_l2                           -1e-7
+ 6  action_rate_l2                       -0.08
+ 7  feet_air_time                        +1.75
+ 8  undesired_contacts                   -2.0
+ 9  flat_orientation_l2                  -20.0
+10  dof_pos_limits                       -2.0
+11  alive                                +2.0
+12  base_height_l2                       -20.0
+13  alternating_foot_phase               +0.35
+14  lateral_velocity_l2                  -7.0
+15  yaw_rate_l2                          -7.0
+16  root_lateral_tilt_l2                 -90.0
+17  root_lateral_tilt_ema_l2             -450.0
+18  world_heading_l2                     -32.0
+19  backward_velocity_l2                 -2.0
+20  forward_velocity_below_l2            -20.0
+21  foot_lateral_spacing_l1              -6.0
+22  foot_signed_lateral_clearance_l1     -20.0
+23  foot_lateral_lane_l1                 -7.0
+24  foot_lateral_lane_max_l1             -5.0
+25  leg_frontal_plane_l1                 -7.0
+26  left_leg_frontal_plane_l1            -2.0
+27  right_leg_frontal_plane_l1           -2.0
+28  max_leg_frontal_plane_l1             -8.0
+29  foot_sagittal_separation_l1          -4.0
+30  swing_foot_overtake_l1               -14.0
+31  foot_parallel_l2                     -1.5
+32  foot_world_parallel_l2                0.0
+33  foot_world_parallel_max_l2            0.0
+34  foot_toe_in_l2                       -8.0
+35  foot_flat_l2                         -0.35
+36  stance_foot_flat_l2                  -2.5
+37  wobble_joint_vel_l2                  -0.04
+38  hip_roll_yaw_position_l2             -12.0
+39  hip_roll_yaw_position_ema_l2         -36.0
+40  low_body_l2                          -30.0
+41  knee_extension_l1                    -30.0
+42  termination_penalty                  -500.0
 ```
 
-Important details:
+Term number 6 is `action_rate_l2`. It penalizes changes in consecutive actions and is intended to reduce twitchy joint target commands.
 
-- `root_lateral_tilt_l2` uses `projected_gravity_b[:, 1]`, which is approximately torso/root roll near upright.
-- `root_lateral_tilt_ema_l2` penalizes persistent lateral lean through a 1.5 s exponential moving average.
-- `hip_roll_yaw_position_l2` and `hip_roll_yaw_position_ema_l2` use hip roll/yaw joint positions relative to default. They are not the orientation of the whole hip/root/box-top link.
-- `foot_flat_l2` and `stance_foot_flat_l2` use `1 - up_z^2`, where `up_z` is the world z component of each foot link local up vector. This is a foot pitch/roll flatness proxy, not a true sole contact-area measurement.
-- `stance_foot_flat_l2` only applies the foot-flatness penalty to feet in contact.
-- There is no true reward for total sole area on the ground because the current contact sensor data does not directly expose contact patch area.
+The scalar reward at each policy step is:
+
+```text
+R =
+  3.0    * track_lin_vel_xy_exp
++ 3.5    * track_ang_vel_z_exp
+- 2.0    * lin_vel_z_l2
+- 0.25   * ang_vel_xy_l2
+- 5e-5   * dof_torques_l2
+- 1e-7   * dof_acc_l2
+- 0.08   * action_rate_l2
++ 1.75   * feet_air_time
+- 2.0    * undesired_contacts
+- 20.0   * flat_orientation_l2
+- 2.0    * dof_pos_limits
++ 2.0    * alive
+- 20.0   * base_height_l2
++ 0.35   * alternating_foot_phase
+- 7.0    * lateral_velocity_l2
+- 7.0    * yaw_rate_l2
+- 90.0   * root_lateral_tilt_l2
+- 450.0  * root_lateral_tilt_ema_l2
+- 32.0   * world_heading_l2
+- 2.0    * backward_velocity_l2
+- 20.0   * forward_velocity_below_l2
+- 6.0    * foot_lateral_spacing_l1
+- 20.0   * foot_signed_lateral_clearance_l1
+- 7.0    * foot_lateral_lane_l1
+- 5.0    * foot_lateral_lane_max_l1
+- 7.0    * leg_frontal_plane_l1
+- 2.0    * left_leg_frontal_plane_l1
+- 2.0    * right_leg_frontal_plane_l1
+- 8.0    * max_leg_frontal_plane_l1
+- 4.0    * foot_sagittal_separation_l1
+- 14.0   * swing_foot_overtake_l1
+- 1.5    * foot_parallel_l2
++ 0.0    * foot_world_parallel_l2
++ 0.0    * foot_world_parallel_max_l2
+- 8.0    * foot_toe_in_l2
+- 0.35   * foot_flat_l2
+- 2.5    * stance_foot_flat_l2
+- 0.04   * wobble_joint_vel_l2
+- 12.0   * hip_roll_yaw_position_l2
+- 36.0   * hip_roll_yaw_position_ema_l2
+- 30.0   * low_body_l2
+- 30.0   * knee_extension_l1
+- 500.0  * termination_penalty
+```
+
+Expanded term meanings:
+
+- `track_lin_vel_xy_exp`: exponential reward for matching commanded horizontal root velocity in m/s. Final commands use `x = 0.35-0.55 m/s`, `y = 0.0 m/s`, with `std = sqrt(0.04) = 0.2 m/s`.
+- `track_ang_vel_z_exp`: exponential reward for matching commanded yaw rate in rad/s. Final command is `0.0 rad/s`, with `std = sqrt(0.05) ~= 0.224 rad/s`.
+- `lin_vel_z_l2`: squared vertical root velocity penalty in `(m/s)^2`; discourages hopping.
+- `ang_vel_xy_l2`: squared roll/pitch angular velocity penalty in `(rad/s)^2`; discourages tumbling body motion.
+- `dof_torques_l2`: squared actuator torque penalty. Revolute-joint torque units are N*m.
+- `dof_acc_l2`: squared joint acceleration penalty in `(rad/s^2)^2`; discourages violent joint acceleration.
+- `action_rate_l2`: squared difference between consecutive policy actions; discourages twitchy target changes.
+- `feet_air_time`: Isaac Lab biped air-time reward using `foot1` and `foot3` contact sensors with threshold `0.45 s`. It rewards stepping, but too much weight can encourage light/tiptoe contact.
+- `undesired_contacts`: penalty when non-foot bodies contact the ground, including `floating_base_link` and leg shell bodies.
+- `flat_orientation_l2`: base/root non-upright penalty from projected gravity; dimensionless because it uses gravity direction components.
+- `dof_pos_limits`: joint limit penalty; discourages joint positions near or beyond configured limits in rad.
+- `alive`: constant positive reward while the environment is not terminated.
+- `base_height_l2`: squared error from target root height `0.78 m`.
+- `alternating_foot_phase`: light schedule reward with a `1.0 s` period. Rewards left-only contact in one half-cycle and right-only contact in the other; gives partial credit for double support and penalizes both feet airborne.
+- `lateral_velocity_l2`: squared body-frame lateral root velocity in `(m/s)^2`; discourages sideways drift.
+- `yaw_rate_l2`: squared body-frame yaw rate in `(rad/s)^2`; encourages straight walking.
+- `root_lateral_tilt_l2`: squared `projected_gravity_b[:, 1]`; near upright this is approximately squared root/torso roll in `rad^2`.
+- `root_lateral_tilt_ema_l2`: same lateral tilt signal after a `1.5 s` exponential moving average. This penalizes persistent lean more than brief step-cycle motion.
+- `world_heading_l2`: squared heading error from world +X. It penalizes sideways heading and backward-facing orientation using the root forward vector.
+- `backward_velocity_l2`: squared negative body-frame forward velocity in `(m/s)^2`; penalizes walking backward.
+- `forward_velocity_below_l2`: squared shortfall below `0.30 m/s` body-frame forward velocity; prevents shuffling or standing still when a forward command is active.
+- `foot_lateral_spacing_l1`: absolute error from desired left-right foot spacing `0.24 m`, computed in the root frame.
+- `foot_signed_lateral_clearance_l1`: penalty if signed left-right foot separation drops below `0.16 m`; prevents crossed feet.
+- `foot_lateral_lane_l1`: penalty if left and right feet leave nominal lateral lanes at `+0.12 m` and `-0.12 m`, after tolerance `0.03 m`.
+- `foot_lateral_lane_max_l1`: worst-foot version of the lane penalty, after tolerance `0.02 m`.
+- `leg_frontal_plane_l1`: penalty if shin and foot lateral positions deviate from their hip-centered sagittal lanes, after tolerance `0.03 m`.
+- `left_leg_frontal_plane_l1`: left-side version of the leg frontal-plane penalty, after tolerance `0.015 m`.
+- `right_leg_frontal_plane_l1`: right-side version of the leg frontal-plane penalty, after tolerance `0.015 m`.
+- `max_leg_frontal_plane_l1`: worst individual shin/foot lateral deviation from its sagittal lane, after tolerance `0.01 m`.
+- `foot_sagittal_separation_l1`: penalty if fore-aft foot separation is below `0.20 m` during single stance.
+- `swing_foot_overtake_l1`: penalty if the swing foot does not pass the stance foot before landing. It uses `target_length = 0.16 m`, `grace_time = 0.10 s`, and `target_air_time = 0.45 s`.
+- `foot_parallel_l2`: squared error between each foot forward direction and the root forward direction in the horizontal plane.
+- `foot_world_parallel_l2`: squared error between each foot forward direction and world +X. Final weight is `0.0`, so it is disabled.
+- `foot_world_parallel_max_l2`: worst-foot version of world foot-yaw alignment. Final weight is `0.0`, so it is disabled.
+- `foot_toe_in_l2`: squared toe-in penalty in the root frame after tolerance `0.03`; discourages toes pointing inward toward the centerline.
+- `foot_flat_l2`: foot pitch/roll flatness proxy for both feet, `sum(1 - up_z^2)`, where `up_z` is each foot link local-up vector projected onto world z. Dimensionless orientation penalty.
+- `stance_foot_flat_l2`: same foot flatness proxy, but applied only to feet currently in contact.
+- `wobble_joint_vel_l2`: squared velocity penalty for hip yaw and hip roll joints in `(rad/s)^2`.
+- `hip_roll_yaw_position_l2`: squared hip roll/yaw joint position error from default in `rad^2`. This is not the orientation of the whole hip/root/box-top link.
+- `hip_roll_yaw_position_ema_l2`: `1.5 s` EMA of hip roll/yaw joint position error, squared. This penalizes persistent joint offsets.
+- `low_body_l2`: squared root-height shortfall below `0.45 m`; discourages crouching/collapse without ending the episode.
+- `knee_extension_l1`: penalty when knee bend magnitude falls below `0.50 rad`; discourages mechanically locked straight knees.
+- `termination_penalty`: large penalty if the environment terminates before timeout.
+
+There is no true reward for total sole contact area on the ground. Current contact sensors provide contact timing/forces, but the reward does not directly measure contact patch area. `stance_foot_flat_l2` is only an orientation proxy for flat stance.
 
 ### Terminations
+
+A hard termination is an environment stop condition that ends the episode immediately when a bad state is detected. Examples are base/body contact with the ground, bad orientation, body height below a threshold, or locked knees. Hard terminations are useful for rejecting clearly invalid behavior, but they can also hide gradients from the policy: instead of seeing how bad a near-fall is, the episode simply ends.
 
 The final task intentionally disables several hard terminations:
 
@@ -235,7 +333,7 @@ low_body = None
 locked_knees = None
 ```
 
-This allowed the optimizer to see gradients/costs for bad behavior rather than instantly ending episodes. Stability was monitored with the `termination_penalty` and episode length. The final successful branches reached timeout-only episodes.
+This allowed the optimizer to see costs for bad behavior rather than instantly ending episodes. Stability was monitored with the `termination_penalty` and episode length. The final successful branches reached timeout-only episodes.
 
 ### Evaluation Video/HUD
 
@@ -271,6 +369,359 @@ The playback script extends episode length to exceed requested video length so 3
 
 ## 2. History And Timeline
 
+### Reconstructed History Before `model_10300`
+
+The history before `model_10300.pt` was not lost. The checkpoint and TensorBoard directories are still present under:
+
+```text
+logs/rsl_rl/kbot_forward_flat/
+```
+
+This early period is less cleanly documented than the later branch sequence, so the following reconstruction is based on saved `params/env.yaml` files, checkpoint ranges, and TensorBoard scalar summaries. It should be treated as factual for reward/config changes, but less complete for visual conclusions than the later branches.
+
+#### Initial Walking Attempts: `0 -> 999`
+
+Representative run:
+
+```text
+2026-04-25_19-54-27, model_0.pt -> model_999.pt
+```
+
+Initial command/task setup:
+
+```text
+episode length: 12.0 s
+lin_vel_x: 0.45 to 0.65 m/s
+lin_vel_y: 0.0 m/s
+ang_vel_z: 0.0 rad/s
+```
+
+Initial reward terms present in this representative run:
+
+```text
+track_lin_vel_xy_exp        +2.5
+track_ang_vel_z_exp         +1.0
+lin_vel_z_l2                -2.0
+ang_vel_xy_l2               -0.25
+dof_torques_l2              -5e-5
+dof_acc_l2                  -1e-7
+action_rate_l2              -0.025
+feet_air_time               +0.75
+undesired_contacts          -2.0
+flat_orientation_l2         -8.0
+dof_pos_limits              -2.0
+lateral_velocity_l2         -2.0
+yaw_rate_l2                 -0.5
+backward_velocity_l2        -2.0
+termination_penalty         -5.0
+```
+
+Observed scalar summary at the end of the representative run:
+
+```text
+mean episode length: 556.95 steps of 0.02 s ~= 11.14 s
+timeout fraction: 0.90666
+xy velocity error: 0.80611 m/s
+yaw velocity error: 0.14417 rad/s
+```
+
+Interpretation:
+
+Early policies learned to survive long enough to time out, but forward tracking was poor. The reward function was still generic and did not yet encode the specific failure modes that later dominated: low body, locked knees, lateral lean, foot crossing, and hip roll/yaw bias.
+
+#### Anti-Collapse Terms: around `0 -> 650`
+
+Representative run:
+
+```text
+2026-04-25_20-35-49, model_0.pt -> model_650.pt
+```
+
+Reward changes relative to the initial representative run:
+
+```text
+low_body_l2          added at -20.0
+knee_extension_l1    added at -4.0
+```
+
+Interpretation:
+
+It was identified that policies could exploit crouched or mechanically poor postures. `low_body_l2` penalized root height below a threshold, and `knee_extension_l1` discouraged straight/locked knees.
+
+#### Slower Speed And Survival Pressure: around `0 -> 1050`
+
+Representative run:
+
+```text
+2026-04-25_21-14-30, model_0.pt -> model_1050.pt
+```
+
+Task and reward changes:
+
+```text
+lin_vel_x:              0.45-0.65 -> 0.20-0.35 m/s
+alive:                  added at +5.0
+base_height_l2:         added at -15.0, target 0.78 m
+flat_orientation_l2:    -8.0 -> -20.0
+knee_extension_l1:      -4.0 -> -50.0
+low_body_l2:            -20.0 -> -30.0
+termination_penalty:    -5.0 -> -100.0
+```
+
+Observed scalar summary:
+
+```text
+mean episode length: 52.70 steps ~= 1.05 s
+timeout fraction: 0.0
+xy velocity error: 0.05339 m/s
+yaw velocity error: 0.07700 rad/s
+```
+
+Interpretation:
+
+The command was slowed sharply and posture/survival terms were strengthened. Velocity error became small because commands were slow, but the policy did not yet survive full episodes. This was a stability-building phase, not a good walking phase.
+
+#### Short Episode / Strong Termination Phase: around `0 -> 1000`
+
+Representative run:
+
+```text
+2026-04-25_21-30-30, model_0.pt -> model_1000.pt
+```
+
+Task and reward changes:
+
+```text
+episode length:         12.0 -> 3.0 s
+lin_vel_x:              0.20-0.35 -> 0.10-0.25 m/s
+knee_extension_l1:      -50.0 -> -80.0
+termination_penalty:    -100.0 -> -500.0
+```
+
+Observed scalar summary:
+
+```text
+mean episode length: 150 steps = 3.0 s
+timeout fraction: 1.0
+xy velocity error: 0.07129 m/s
+yaw velocity error: 0.27508 rad/s
+```
+
+Interpretation:
+
+Episodes were shortened to make survival achievable. This helped produce timeout-reaching policies, but yaw control remained poor and the task was too easy/short to imply robust walking.
+
+#### Straightness Pressure: `1050 -> 2348`
+
+Representative runs:
+
+```text
+2026-04-25_21-42-41, model_1050.pt -> model_1549.pt
+2026-04-26_01-38-53, model_1550.pt -> model_2348.pt
+```
+
+Task/reward changes:
+
+```text
+episode length:             3.0 -> 8.0 s
+lateral_velocity_l2:        -2.0 -> -3.0
+track_ang_vel_z_exp:        +1.0 -> +2.0
+yaw_rate_l2:                -0.5 -> -2.0
+```
+
+Observed scalar summaries:
+
+```text
+model_1549 range:
+  mean episode length: 400 steps = 8.0 s
+  timeout fraction: 1.0
+  xy velocity error: 0.13314 m/s
+  yaw velocity error: 0.43884 rad/s
+
+model_2348 range:
+  mean episode length: 400 steps = 8.0 s
+  timeout fraction: 1.0
+  xy velocity error: 0.12311 m/s
+  yaw velocity error: 0.32980 rad/s
+```
+
+Interpretation:
+
+The policy could survive 8 s episodes, but straightness/yaw was still poor. This motivated stronger yaw and foot placement structure.
+
+#### First Foot Placement Terms: `2250 -> 3148`
+
+Representative runs:
+
+```text
+2026-04-26_02-15-34, model_2250.pt -> model_2649.pt
+2026-04-26_02-45-50, model_2650.pt -> model_3148.pt
+```
+
+Task/reward changes:
+
+```text
+lin_vel_x:                         0.10-0.25 -> 0.18-0.30 m/s
+alive:                             +5.0 -> +2.0
+forward_velocity_below_l2:         added at -8.0
+foot_lateral_spacing_l1:           added at -3.0
+foot_parallel_l2:                  added at -1.0
+foot_flat_l2:                      added at -0.5, then -0.2
+
+action_rate_l2:                    -0.025 -> -0.035
+feet_air_time:                     +0.75 -> +1.25
+foot_lateral_spacing_l1:           -3.0 -> -5.0
+foot_signed_lateral_clearance_l1:  added at -12.0
+foot_world_parallel_l2:            added at -4.0
+lateral_velocity_l2:               -3.0 -> -5.0
+track_ang_vel_z_exp:               +2.0 -> +3.0
+world_heading_l2:                  added at -12.0
+yaw_rate_l2:                       -2.0 -> -4.0
+```
+
+Observed scalar summary near `3148`:
+
+```text
+mean episode length: 400 steps = 8.0 s
+timeout fraction: 1.0
+xy velocity error: 0.08892 m/s
+yaw velocity error: 0.18416 rad/s
+```
+
+Interpretation:
+
+Foot placement and heading terms materially improved yaw/straightness. This is where the reward began moving from generic survival toward gait shaping.
+
+#### Stronger Lateral Clearance / Step Structure: `3150 -> 4199`
+
+Representative runs:
+
+```text
+2026-04-26_02-52-06, model_3150.pt -> model_3647.pt
+2026-04-26_03-27-17, model_3600.pt -> model_4199.pt
+```
+
+Task/reward changes:
+
+```text
+lin_vel_x:                         0.18-0.30 -> 0.22-0.34 -> 0.32-0.42 m/s
+action_rate_l2:                    -0.035 -> -0.05 -> -0.055
+foot_lateral_spacing_l1:           -5.0 -> -6.0
+foot_signed_lateral_clearance_l1:  -12.0 -> -20.0
+foot_world_parallel_l2:            -4.0 -> -6.0
+forward_velocity_below_l2:         -8.0 -> -10.0 -> -12.0
+world_heading_l2:                  -12.0 -> -16.0
+yaw_rate_l2:                       -4.0 -> -5.0
+foot_sagittal_separation_l1:       added at -5.0
+wobble_joint_vel_l2:               added at -0.04
+```
+
+Observed scalar summaries:
+
+```text
+model_3647 range:
+  xy velocity error: 0.09279 m/s
+  yaw velocity error: 0.14435 rad/s
+
+model_4199 range:
+  xy velocity error: 0.10307 m/s
+  yaw velocity error: 0.14405 rad/s
+```
+
+Interpretation:
+
+Foot crossing and foot-lane discipline were reinforced. Yaw error improved compared with the earlier 8 s survival phase, but the policy was becoming increasingly constrained by foot and heading terms.
+
+#### Fast-Walk Push And Swing Structure: `5450 -> 6599`
+
+Representative runs:
+
+```text
+2026-04-26_04-50-38, model_5450.pt -> model_6048.pt
+2026-04-26_17-54-49, model_6000.pt -> model_6599.pt
+```
+
+Task/reward changes:
+
+```text
+lin_vel_x:                         0.32-0.42 -> 0.80-1.10 m/s
+action_rate_l2:                    -0.055 -> -0.08
+feet_air_time:                     +1.25 -> +2.25
+foot_parallel_l2:                  -1.0 -> -1.5
+foot_sagittal_separation_l1:       -5.0 -> -4.0
+forward_velocity_below_l2:         -12.0 -> -16.0
+stance_foot_flat_l2:               added at -1.5
+swing_foot_overtake_l1:            added at -14.0
+world_heading_l2:                  -16.0 -> -20.0
+leg_frontal_plane_l1:              added at -5.0
+```
+
+Observed scalar summaries:
+
+```text
+model_6048 range:
+  xy velocity error: 0.17006 m/s
+  yaw velocity error: 0.13418 rad/s
+
+model_6599 range:
+  xy velocity error: 0.17094 m/s
+  yaw velocity error: 0.11420 rad/s
+```
+
+Interpretation:
+
+The policy was pushed toward faster walking. Step structure and stance-foot flatness were added. Speed tracking became harder, but yaw improved. This phase produced moving policies, but likely encouraged compensatory lean and hip offsets because forward progress was being pushed before gait symmetry was solved.
+
+#### Strong Frontal-Plane And Hip/Torso Bias Penalties: `8400 -> 10300`
+
+Representative runs:
+
+```text
+2026-04-26_19-42-47, model_8400.pt -> model_8895.pt
+2026-04-26_20-29-08, model_8950.pt -> model_9449.pt
+2026-04-26_21-22-06, model_9250.pt -> model_9649.pt
+2026-04-27_01-50-43, model_9500.pt -> model_10099.pt
+2026-04-27_01-57-15, model_10050.pt -> model_10349.pt
+```
+
+Task/reward changes:
+
+```text
+lin_vel_x:                         0.80-1.10 -> 0.75-0.95 m/s
+track_lin_vel_xy_exp:              +2.5 -> +3.0
+track_ang_vel_z_exp:               +3.0 -> +3.5
+base_height_l2:                    -15.0 -> -20.0
+forward_velocity_below_l2:         -16.0 -> -20.0
+world_heading_l2:                  -20.0 -> -24.0
+foot_signed_lateral_clearance_l1:  -20.0 -> -24.0
+root_lateral_tilt_l2:              added at -24.0
+hip_roll_yaw_position_l2:          added at -1.5
+leg_frontal_plane_l1:              -5.0 -> -14.0
+left_leg_frontal_plane_l1:         added at -4.0
+right_leg_frontal_plane_l1:        added at -4.0
+max_leg_frontal_plane_l1:          added at -16.0
+foot_lateral_lane_l1:              added at -10.0
+foot_lateral_lane_max_l1:          added at -8.0
+foot_toe_in_l2:                    added at -8.0
+foot_world_parallel_max_l2:        added at -3.0
+```
+
+Observed scalar summary at the reference baseline:
+
+```text
+2026-04-27_01-57-15/model_10300.pt:
+  speed mean:            0.77082 m/s
+  command mean:          0.81824 m/s
+  yaw-rate mean:        -0.01659 rad/s
+  torso avg mean:        0.03291
+  torso RMS mean:        0.04046
+  hip roll/yaw RMS mean: 0.10818 rad
+```
+
+Interpretation:
+
+The reward function at `model_10300.pt` had become a dense gait-shaping reward with strong speed, heading, foot lane, frontal-plane, and anti-bias terms. It produced a usable forward-moving policy, but the quality metrics showed a persistent lateral torso bias and persistent hip roll/yaw offsets. This motivated the post-10300 branch plan: reduce overconstraint, slow down, directly target persistent bias, and separate bias from oscillation in the HUD.
+
 ### Baseline
 
 Reference checkpoint:
@@ -299,7 +750,7 @@ logs/rsl_rl/kbot_forward_flat/2026-04-27_03-46-31/model_10449.pt
 
 Why:
 
-We suspected the policy was boxed in by too many simultaneous foot yaw, heading, knee, and frontal-plane constraints.
+It was suspected that the policy was boxed in by too many simultaneous foot yaw, heading, knee, and frontal-plane constraints.
 
 Changes:
 
@@ -334,7 +785,7 @@ logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27/model_10599.pt
 
 Why:
 
-The fast command range made the policy prioritize moving over walking cleanly. We slowed the task so symmetry could emerge first.
+The fast command range appeared to make the policy prioritize moving over walking cleanly. The task was slowed so symmetry could emerge first.
 
 Changes:
 
@@ -367,7 +818,7 @@ logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47/model_10798.pt
 
 Why:
 
-The task needed a stronger direct penalty on the quantities we cared about.
+The task needed a stronger direct penalty on the primary quality quantities.
 
 Changes:
 
@@ -418,7 +869,7 @@ logs/rsl_rl/kbot_forward_flat/2026-04-27_11-12-07/model_11294.pt
 
 Why:
 
-The gait needed a consistent stepping rhythm. We added `sin/cos` gait phase observations and a light alternating contact reward.
+The gait needed a consistent stepping rhythm. `sin/cos` gait phase observations and a light alternating contact reward were added.
 
 Result:
 
@@ -507,7 +958,7 @@ logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt
 
 Why:
 
-The robot still appeared to tiptoe or use edge contact. There was no true sole-area reward, so we strengthened the foot-flatness proxy.
+The robot still appeared to tiptoe or use edge contact. There was no true sole-area reward, so the foot-flatness proxy was strengthened.
 
 Changes:
 
@@ -555,7 +1006,7 @@ logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47/model_11990.pt
 
 Why:
 
-One last short continuation before restarting, aimed only at sole contact. We did not tighten torso/hip again because those terms were already doing their job and further tightening risked stiffness or crouch.
+One last short continuation before restarting, aimed only at sole contact. Torso/hip rewards were not tightened again because those terms were already doing their job and further tightening risked stiffness or crouch.
 
 Changes:
 
@@ -580,7 +1031,7 @@ Meaning:
 
 Training stayed stable for 200 iterations: full 400-step episodes, timeout-only, no termination penalty. Hip roll/yaw was effectively unchanged, torso RMS was slightly worse on this 30 s sample, speed tracking was a little better. Choose between `11791` and `11990` visually based on sole contact. If sole contact is not clearly better, `11791` is the safer final checkpoint.
 
-## 3. How I Would Remake This
+## 3. Recommended Remake
 
 ### High-Level Recommendation
 
@@ -608,7 +1059,7 @@ num_envs: 2048 if stable, 1024 if iteration speed or memory is better
 
 Keep moderate domain randomization, but do not add pushes, rough terrain, or vision until the gait is good.
 
-### Reward Design I Would Start With
+### Reward Design To Start With
 
 Use fewer terms at first.
 
@@ -674,7 +1125,7 @@ foot_lateral_lane_max_l1
 
 That cluster was useful for diagnostics but too redundant for a clean starting design.
 
-### Reward Weights I Would Try First
+### Reward Weights To Try First
 
 Suggested initial restart weights:
 
@@ -764,7 +1215,7 @@ Use `torso avg` and `torso rms` together:
 - `torso rms` tells whether it is moving/oscillating.
 - A high RMS with near-zero avg is a different problem than a biased mean.
 
-### What I Do Not Want To Forget
+### Do Not Forget
 
 - `hip ry rms` is a joint-position metric for hip roll/yaw joints. It is not the orientation of the whole hip/root/box-top link.
 - The whole upper body/box-top orientation should be measured with root orientation or projected gravity, not hip joint names.
@@ -803,4 +1254,3 @@ mid-level navigation / recovery / obstacle policy:
 ```
 
 The walking policy should be boring and reliable before adding anything clever.
-
