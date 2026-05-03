@@ -12,7 +12,7 @@ from isaaclab.utils import configclass
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as base_mdp
 from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
 
-from .assets import KBOT_CFG, REPO_ROOT
+from .assets import KBOT_CFG, KBOT_PADS_CFG, REPO_ROOT
 from . import mdp
 
 
@@ -297,6 +297,7 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
     def __post_init__(self) -> None:
         super().__post_init__()
 
+        self.scene.robot = KBOT_PADS_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.commands.base_velocity.ranges.lin_vel_x = (0.30, 0.50)
         self.commands.base_velocity.resampling_time_range = (4.0, 8.0)
 
@@ -351,11 +352,13 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
         )
 
         self.rewards.low_body_l2.weight = -40.0
-        self.rewards.low_body_l2.params["minimum_height"] = 0.50
+        self.rewards.low_body_l2.params["minimum_height"] = 0.60
+        self.rewards.base_height_l2.params["target_height"] = 0.88
+        self.rewards.upright_alive.params["minimum_height"] = 0.65
         self.rewards.knee_extension_l1.weight = -18.0
         self.rewards.knee_extension_l1.params["min_bend"] = 0.35
 
-        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.42})
+        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.55})
         self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.95})
 
 

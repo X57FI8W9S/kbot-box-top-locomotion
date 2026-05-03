@@ -68,6 +68,53 @@ right_heel_contact
 right_toe_contact
 ```
 
+First code-generated implementation:
+
+```text
+asset patch script: scripts/asset/add_heel_toe_pads.py
+patched asset: assets/robot/usd/kbot_box_top3_pads.usda
+inspection script: scripts/asset/inspect_kbot_usd.py
+validation script: scripts/asset/validate_heel_toe_pads.py
+V2 asset config: KBOT_PADS_CFG in source/kbot_loco/kbot_loco/tasks/locomotion/assets.py
+V2 task uses the pad asset; V1 still uses the original asset.
+```
+
+The generated pads are simple USD cube collision bodies, fixed to the original feet:
+
+```text
+left_heel_pad
+left_toe_pad
+right_heel_pad
+right_toe_pad
+```
+
+Initial validation confirms that Isaac Lab sees these as distinct rigid bodies and the contact sensor exposes distinct body ids. A held-pose scan was added to avoid confusing sensor validation with whether the robot can balance.
+
+Observed held-pose validation:
+
+```text
+air: passes; high/tilted poses can produce all four pad contacts false
+toe-only: passes; root height around 0.74 to 0.76 m gives toe contact without heel contact
+full support: passes; lower held root poses give heel && toe on both feet
+heel-only: partial; heel-dominant states can be produced, but clean symmetric heel-only for both feet is not robust with the simple box pads
+```
+
+The generated pad asset uses a heel drop offset because the current simplified foot asset is toe-low in the held-pose scan:
+
+```text
+heel_drop = 0.04 m
+```
+
+This is acceptable for a first diagnostic asset, but not ideal as final foot geometry. If the first pad-trained run shows contact artifacts or asymmetric heel behavior, replace the generated boxes with a CAD/Blender sole split. A five-piece sole per foot is preferred:
+
+```text
+heel
+toe
+inner edge
+outer edge
+center/midsole
+```
+
 Definition after that upgrade:
 
 ```text

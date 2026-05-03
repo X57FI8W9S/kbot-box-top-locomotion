@@ -78,10 +78,11 @@ termination settings: time-out, low root height below 0.42 m, bad orientation ab
 Current contact sensor status:
 
 ```text
-The current box-top asset exposes whole-foot contact bodies named foot1 and foot3.
-It does not expose separate heel, toe, sole inner-edge, or sole outer-edge contact bodies.
-True full support should be defined later as heel_contact && toe_contact for each foot.
-Until the asset is upgraded, contact diagnostics can only report whole-foot contact and proxy foot-flat/full-sole indicators.
+The original box-top asset exposes whole-foot contact bodies named foot1 and foot3.
+A first generated pad asset now exists at assets/robot/usd/kbot_box_top3_pads.usda.
+It adds left_heel_pad, left_toe_pad, right_heel_pad, and right_toe_pad as separate rigid collision bodies.
+True full support is defined as heel_contact && toe_contact for each foot.
+Inner-edge and outer-edge pads are not yet implemented.
 ```
 
 ## 5. V2 Reward Function
@@ -228,6 +229,16 @@ code/config change: added low root-height termination below 0.42 m, bad-orientat
 why it was tried: prevent the collapsed time-out exploit observed in the first V2 run
 result: pending
 decision: pending
+```
+
+```text
+date: 2026-05-02
+run: asset validation, not PPO training
+checkpoint: none
+code/config change: generated kbot_box_top3_pads.usda with four heel/toe pad rigid bodies; V2 now uses KBOT_PADS_CFG; diagnostics now prefer heel/toe pad contacts when available; heel pads use a 0.04 m lower offset to compensate the simplified toe-low foot posture
+why it was tried: whole-foot foot1/foot3 contact cannot truthfully measure full support
+result: partial pass; the pads appear as distinct rigid bodies and contact sensor body ids; held-pose validation gives clean air, toe-only, and full-support states, but clean symmetric heel-only remains weak with simple box pads
+decision: usable as a first diagnostic asset only; prefer CAD/Blender five-piece soles if heel-only validation or training contact behavior remains ambiguous
 ```
 
 ## 9. Checkpoint Comparisons

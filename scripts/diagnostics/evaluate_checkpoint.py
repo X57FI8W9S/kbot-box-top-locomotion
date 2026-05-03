@@ -100,13 +100,13 @@ def _joint_ids(joint_names: list[str], pattern: str) -> list[int]:
     return [i for i, name in enumerate(joint_names) if pattern in name]
 
 
-def _contact_body_ids(contact_sensor: ContactSensor, names: tuple[str, str]) -> list[int]:
+def _contact_body_ids(contact_sensor: ContactSensor, names: tuple[str, ...]) -> list[int]:
     body_names = getattr(contact_sensor, "body_names", None)
     if body_names is None:
         body_names = getattr(contact_sensor.data, "body_names", None)
     if body_names is not None:
         return [list(body_names).index(name) for name in names]
-    return [0, 1]
+    return list(range(len(names)))
 
 
 def _paired_joint_symmetry(joint_names: list[str], samples: np.ndarray) -> dict[str, float]:
@@ -260,7 +260,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     obs = env.get_observations()
     robot = env.unwrapped.scene["robot"]
     contact_sensor: ContactSensor = env.unwrapped.scene.sensors["contact_forces"]
-    contact_body_ids = _contact_body_ids(contact_sensor, ("foot1", "foot3"))
+    contact_body_names = list(getattr(contact_sensor, "body_names", None) or getattr(contact_sensor.data, "body_names", None) or [])
+    pad_names = ("left_heel_pad", "left_toe_pad", "right_heel_pad", "right_toe_pad")
+    use_pad_contacts = all(name in contact_body_names for name in pad_names)
+    if use_pad_contacts:
+        pad_body_ids = _contact_body_ids(contact_sensor, pad_names)
+        contact_body_ids = pad_body_ids
+    else:
+        pad_body_ids = []
+        contact_body_ids = _contact_body_ids(contact_sensor, ("foot1", "foot3"))
     command_manager = getattr(env.unwrapped, "command_manager", None)
     joint_names = list(robot.data.joint_names)
     hip_roll_ids = _joint_ids(joint_names, "hip_roll")
@@ -280,6 +288,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "root_pitch_proxy": [],
         "joint_pos": [],
         "contact": [],
+        "pad_contact": [],
         "foot_pos": [],
         "foot_up_z": [],
         "stance_slip": [],
@@ -294,7 +303,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             except Exception:
                 command_speed = 0.0
         contact_time = contact_sensor.data.current_contact_time[0, contact_body_ids].detach().cpu().numpy()
-        contact = contact_time > 0.0
+        raw_contact = contact_time > 0.0
+        if use_pad_contacts:
+            pad_contact = raw_contact.astype(np.float32)
+            contact = np.asarray([raw_contact[0] or raw_contact[1], raw_contact[2] or raw_contact[3]], dtype=bool)
+        else:
+            pad_contact = np.zeros(4, dtype=np.float32)
+            contact = raw_contact
         foot_body_ids = [robot.body_names.index("foot1"), robot.body_names.index("foot3")]
         foot_pos = robot.data.body_pos_w[0, foot_body_ids].detach().cpu().numpy()
         foot_quat = robot.data.body_quat_w[0, foot_body_ids]
@@ -316,6 +331,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         series["root_pitch_proxy"].append(float(robot.data.projected_gravity_b[0, 0].item()))
         series["joint_pos"].append(robot.data.joint_pos[0].detach().cpu().numpy())
         series["contact"].append(contact.astype(np.float32))
+        series["pad_contact"].append(pad_contact)
         series["foot_pos"].append(foot_pos)
         series["foot_up_z"].append(up_z)
         series["stance_slip"].append(stance_slip)
@@ -336,9 +352,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     hip_yaw_window = joint_window[:, hip_yaw_ids] if hip_yaw_ids else np.zeros((0, 1))
     knee_window = np.abs(joint_window[:, knee_ids]) if knee_ids else np.zeros((0, 1))
     contact = arrays["contact"].astype(bool)
+    pad_contact = arrays["pad_contact"].astype(bool)
     double_support = contact[:, 0] & contact[:, 1]
     airborne = ~contact[:, 0] & ~contact[:, 1]
-    full_sole_proxy = contact & (arrays["foot_up_z"] > 0.96)
+    if use_pad_contacts:
+        full_support = np.column_stack((pad_contact[:, 0] & pad_contact[:, 1], pad_contact[:, 2] & pad_contact[:, 3]))
+        toe_only = np.column_stack((pad_contact[:, 1] & ~pad_contact[:, 0], pad_contact[:, 3] & ~pad_contact[:, 2]))
+        heel_only = np.column_stack((pad_contact[:, 0] & ~pad_contact[:, 1], pad_contact[:, 2] & ~pad_contact[:, 3]))
+    else:
+        full_support = contact & (arrays["foot_up_z"] > 0.96)
+        toe_only = np.zeros_like(contact)
+        heel_only = np.zeros_like(contact)
     distance = max(float(arrays["root_x"][-1] - arrays["root_x"][0]), 1.0e-6)
     yaw_drift = float(np.trapz(arrays["yaw_rate"], arrays["time"]))
     lateral_drift = float(arrays["root_y"][-1] - arrays["root_y"][0])
@@ -364,8 +388,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "root_height_p05_m": float(np.percentile(arrays["root_z"], 5)),
         "double_support_fraction": float(np.mean(double_support)),
         "airborne_fraction": float(np.mean(airborne)),
-        "full_sole_proxy_fraction_left": float(np.mean(full_sole_proxy[:, 0])),
-        "full_sole_proxy_fraction_right": float(np.mean(full_sole_proxy[:, 1])),
+        "full_support_fraction_left": float(np.mean(full_support[:, 0])),
+        "full_support_fraction_right": float(np.mean(full_support[:, 1])),
+        "toe_only_fraction_left": float(np.mean(toe_only[:, 0])),
+        "toe_only_fraction_right": float(np.mean(toe_only[:, 1])),
+        "heel_only_fraction_left": float(np.mean(heel_only[:, 0])),
+        "heel_only_fraction_right": float(np.mean(heel_only[:, 1])),
         "stance_slip_mean_mps": float(np.mean(arrays["stance_slip"])),
         "step_count": len(steps),
         "step_length_mean_m": float(np.mean(step_lengths)) if step_lengths else 0.0,
@@ -394,7 +422,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "cycle_window": args_cli.cycle_window,
         "cycle_window_start_s": window_start,
         "joint_names": joint_names,
-        "contact_quality_note": "No heel/toe/edge contact bodies are available; full_sole metrics are orientation/contact proxies.",
+        "contact_quality_note": (
+            "Using true heel/toe pad contacts."
+            if use_pad_contacts
+            else "No heel/toe/edge contact bodies are available; full_support metrics are orientation/contact proxies."
+        ),
+        "contact_body_names": contact_body_names,
+        "uses_heel_toe_pads": use_pad_contacts,
         "metrics": {
             "vx": _summary(arrays["vx"].tolist()),
             "cmd_vx": _summary(arrays["cmd_vx"].tolist()),
