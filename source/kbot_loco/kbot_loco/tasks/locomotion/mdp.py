@@ -494,6 +494,25 @@ def stance_foot_flat_l2(
     return torch.sum((1.0 - torch.square(up_w[..., 2])) * in_contact, dim=1)
 
 
+def single_stance_foot_flat_l2(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+) -> torch.Tensor:
+    """Penalize foot pitch/roll only for the single support foot."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    single_support = torch.sum(in_contact.int(), dim=1, keepdim=True) == 1
+    stance_mask = in_contact & single_support
+    foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    up_b = torch.zeros(env.num_envs, len(asset_cfg.body_ids), 3, device=asset.data.root_pos_w.device)
+    up_b[..., 2] = 1.0
+    up_w = quat_apply(foot_quat_w.reshape(-1, 4), up_b.reshape(-1, 3)).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
+    return torch.sum((1.0 - torch.square(up_w[..., 2])) * stance_mask, dim=1)
+
+
 def locked_knees(
     env: ManagerBasedRLEnv,
     min_bend: float,
@@ -544,3 +563,22 @@ def joint_position_ema_l2(
     ema = torch.where(reset, joint_error, (1.0 - alpha) * ema + alpha * joint_error)
     setattr(env, buffer_name, ema)
     return torch.sum(torch.square(ema), dim=1)
+
+
+def early_action_sequence_l2(
+    env: ManagerBasedRLEnv,
+    targets: list[list[float]],
+    duration_s: float,
+) -> torch.Tensor:
+    """Penalize deviation from a short hand-authored bootstrap action sequence."""
+    actions = env.action_manager.action
+    target = torch.tensor(targets, dtype=actions.dtype, device=actions.device)
+    if target.ndim != 2 or target.shape[1] != actions.shape[1]:
+        raise ValueError(f"Expected action target shape (*, {actions.shape[1]}), got {tuple(target.shape)}")
+
+    elapsed_s = env.episode_length_buf.float() * env.step_dt
+    active = elapsed_s <= duration_s
+    phase = torch.clamp(elapsed_s / max(duration_s, 1.0e-6), min=0.0, max=1.0)
+    target_index = torch.clamp((phase * (target.shape[0] - 1)).long(), min=0, max=target.shape[0] - 1)
+    selected_target = target[target_index]
+    return torch.sum(torch.square(actions - selected_target), dim=1) * active

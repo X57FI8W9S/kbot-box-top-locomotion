@@ -32,3 +32,15 @@ class KBotForwardFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class KBotForwardFlatConservativePPORunnerCfg(KBotForwardFlatPPORunnerCfg):
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=0.05,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
+        actor_hidden_dims=[256, 128, 128],
+        critic_hidden_dims=[256, 128, 128],
+        activation="elu",
+    )

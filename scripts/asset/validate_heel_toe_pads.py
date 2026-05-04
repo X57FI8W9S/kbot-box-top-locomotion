@@ -102,12 +102,14 @@ def run_scenario(name: str, *, root_height: float, left_ankle: float, right_ankl
 
     action = torch.zeros((1, unwrapped.action_manager.total_action_dim), device=unwrapped.device)
     root_pose = robot.data.root_pose_w.clone()
+    reset_root_quat = root_pose[:, 3:7].clone()
     root_pose[:, 0:3] = torch.tensor((0.0, 0.0, root_height), device=unwrapped.device)
-    half_pitch = 0.5 * args.root_pitch
-    root_pose[:, 3:7] = torch.tensor(
-        (math.cos(half_pitch), 0.0, math.sin(half_pitch), 0.0),
-        device=unwrapped.device,
-    )
+    if args.root_pitch != 0.0:
+        half_pitch = 0.5 * args.root_pitch
+        root_pose[:, 3:7] = torch.tensor(
+            (math.cos(half_pitch), 0.0, math.sin(half_pitch), 0.0),
+            device=unwrapped.device,
+        )
     root_velocity = torch.zeros((1, 6), device=unwrapped.device)
     joint_pos = robot.data.joint_pos.clone()
     joint_vel = torch.zeros_like(robot.data.joint_vel)
@@ -116,11 +118,14 @@ def run_scenario(name: str, *, root_height: float, left_ankle: float, right_ankl
     joint_pos[:, joint_name_to_id["right_ankle_02"]] = right_ankle
     def set_pose(height: float, pitch: float) -> None:
         root_pose[:, 0:3] = torch.tensor((0.0, 0.0, height), device=unwrapped.device)
-        half_pitch_local = 0.5 * pitch
-        root_pose[:, 3:7] = torch.tensor(
-            (math.cos(half_pitch_local), 0.0, math.sin(half_pitch_local), 0.0),
-            device=unwrapped.device,
-        )
+        if pitch == 0.0:
+            root_pose[:, 3:7] = reset_root_quat
+        else:
+            half_pitch_local = 0.5 * pitch
+            root_pose[:, 3:7] = torch.tensor(
+                (math.cos(half_pitch_local), 0.0, math.sin(half_pitch_local), 0.0),
+                device=unwrapped.device,
+            )
 
     def sample_contact(sample_steps: int) -> tuple[torch.Tensor, list[float]]:
         contacts_local = []
@@ -164,9 +169,9 @@ def run_scenario(name: str, *, root_height: float, left_ankle: float, right_ankl
 
 def main() -> None:
     scenarios_by_name = {
-        "flat_default": ("flat_default", 0.78, 0.0, 0.0),
-        "toe_guess": ("toe_guess", 0.78, 0.45, -0.45),
-        "heel_guess": ("heel_guess", 0.78, -0.45, 0.45),
+        "flat_default": ("flat_default", 0.88, 0.0, 0.0),
+        "toe_guess": ("toe_guess", 0.88, 0.45, -0.45),
+        "heel_guess": ("heel_guess", 0.88, -0.45, 0.45),
         "air_high_start": ("air_high_start", 1.10, 0.0, 0.0),
     }
     scenarios = list(scenarios_by_name.values()) if args.scenario == "all" else [scenarios_by_name[args.scenario]]

@@ -10,33 +10,16 @@
 
 over "boxtop_sim"
 {
-    over "foot1"
+    def Cube "left_heel_pad" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
     {
-        def Cube "left_heel_pad" (
-            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
-        )
-        {
-            float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
-            float physics:mass = 0.005
-            color3f[] primvars:displayColor = [(0.1, 0.35, 1)]
-            double size = 1
-            float3 xformOp:scale = (0.01, 0.001, 0.01)
-            double3 xformOp:translate = (-0.07105709925613503, -0.03652850194431911, -0.019317773844001653)
-            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
-        }
-
-        def Cube "left_toe_pad" (
-            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
-        )
-        {
-            float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
-            float physics:mass = 0.005
-            color3f[] primvars:displayColor = [(1, 0.45, 0.05)]
-            double size = 1
-            float3 xformOp:scale = (0.01, 0.001, 0.01)
-            double3 xformOp:translate = (0.13105708770480182, -0.036528810691372586, -0.01963958487162781)
-            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
-        }
+        custom float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
+        custom float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.1, 0.35, 1)]
+        double size = 1
+        matrix4d xformOp:transform = ( (0.009999999776482582, 0, 0, 0), (0, -3.422854340447099e-11, 0.0010000000474974507, 0), (0, -0.009999999776482575, -3.4228541013634965e-10, 0), (-0.07081997979455446, 0.1419484418795147, -0.8763561518773356, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
     }
 
     over "joints"
@@ -44,7 +27,7 @@ over "boxtop_sim"
         def PhysicsFixedJoint "left_heel_pad_fixedJoint"
         {
             rel physics:body0 = </boxtop_sim/foot1>
-            rel physics:body1 = </boxtop_sim/foot1/left_heel_pad>
+            rel physics:body1 = </boxtop_sim/left_heel_pad>
             point3f physics:localPos0 = (-0.071057096, -0.0365285, -0.019317774)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -54,7 +37,7 @@ over "boxtop_sim"
         def PhysicsFixedJoint "left_toe_pad_fixedJoint"
         {
             rel physics:body0 = </boxtop_sim/foot1>
-            rel physics:body1 = </boxtop_sim/foot1/left_toe_pad>
+            rel physics:body1 = </boxtop_sim/left_toe_pad>
             point3f physics:localPos0 = (0.13105708, -0.03652881, -0.019639585)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -64,7 +47,7 @@ over "boxtop_sim"
         def PhysicsFixedJoint "right_heel_pad_fixedJoint"
         {
             rel physics:body0 = </boxtop_sim/foot3>
-            rel physics:body1 = </boxtop_sim/foot3/right_heel_pad>
+            rel physics:body1 = </boxtop_sim/right_heel_pad>
             point3f physics:localPos0 = (-0.07105707, -0.0365287, -0.023317682)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -74,7 +57,7 @@ over "boxtop_sim"
         def PhysicsFixedJoint "right_toe_pad_fixedJoint"
         {
             rel physics:body0 = </boxtop_sim/foot3>
-            rel physics:body1 = </boxtop_sim/foot3/right_toe_pad>
+            rel physics:body1 = </boxtop_sim/right_toe_pad>
             point3f physics:localPos0 = (0.13105711, -0.03652881, -0.023639627)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -82,33 +65,40 @@ over "boxtop_sim"
         }
     }
 
-    over "foot3"
+    def Cube "left_toe_pad" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
     {
-        def Cube "right_heel_pad" (
-            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
-        )
-        {
-            float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
-            float physics:mass = 0.005
-            color3f[] primvars:displayColor = [(0.1, 0.35, 1)]
-            double size = 1
-            float3 xformOp:scale = (0.01, 0.001, 0.01)
-            double3 xformOp:translate = (-0.07105706975009025, -0.036528700099187614, -0.023317682096323584)
-            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
-        }
+        custom float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
+        custom float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(1, 0.45, 0.05)]
+        double size = 1
+        matrix4d xformOp:transform = ( (0.00939692611570996, 0.0034202010329130966, 9.076031667637867e-11, 0), (9.07603230159137e-12, -5.1472742293003526e-11, 0.00100000004749745, 0), (0.0034202010329130966, -0.009396926115709945, -5.147273869767418e-10, 0), (0.1266584530284912, 0.1419484418794983, -0.8763464369177918, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
 
-        def Cube "right_toe_pad" (
-            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
-        )
-        {
-            float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
-            float physics:mass = 0.005
-            color3f[] primvars:displayColor = [(1, 0.45, 0.05)]
-            double size = 1
-            float3 xformOp:scale = (0.01, 0.001, 0.01)
-            double3 xformOp:translate = (0.13105711078726043, -0.03652881092818548, -0.02363962612739297)
-            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
-        }
+    def Cube "right_heel_pad" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        custom float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
+        custom float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.1, 0.35, 1)]
+        double size = 1
+        matrix4d xformOp:transform = ( (0.009999999776482582, 0, 0, 0), (0, -3.422854340447099e-11, 0.0010000000474974507, 0), (0, -0.009999999776482575, -3.4228541013634965e-10, 0), (-0.07127357942482075, -0.14269000000000004, -0.8765759920270019, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+
+    def Cube "right_toe_pad" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        custom float3 physics:diagonalInertia = (0.000001, 0.000001, 0.000001)
+        custom float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(1, 0.45, 0.05)]
+        double size = 1
+        matrix4d xformOp:transform = ( (0.009396925977904575, -0.003420201411530297, -7.861092378974924e-11, 0), (-7.861092928065896e-12, -4.458247272168018e-11, 0.0010000000474974504, 0), (-0.003420201411530297, -0.009396925977904567, -4.4582469607630585e-10, 0), (0.12669978717218883, -0.1426906585862958, -0.87657, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
     }
 }
 

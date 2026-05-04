@@ -31,7 +31,6 @@ import cli_args  # noqa: E402
 
 
 parser = argparse.ArgumentParser(description="Evaluate a KBot checkpoint with gait diagnostics and hard gates.")
-parser.add_argument("--checkpoint", type=str, required=True)
 parser.add_argument("--baseline_metrics", type=str, default=None)
 parser.add_argument("--output_dir", type=str, default=None)
 parser.add_argument("--video_length", type=int, default=1500)
@@ -68,8 +67,11 @@ from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg, DirectRLEnvCfg, Manag
 from isaaclab.sensors import ContactSensor  # noqa: E402
 from isaaclab.utils.assets import retrieve_file_path  # noqa: E402
 from isaaclab.utils.math import quat_apply  # noqa: E402
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg  # noqa: E402
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper  # noqa: E402
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
+
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "rsl_rl"))
+from rsl_rl_compat import rsl_rl_train_cfg  # noqa: E402
 
 
 installed_version = version.parse(metadata.version("rsl-rl-lib"))
@@ -124,7 +126,30 @@ def _paired_joint_symmetry(joint_names: list[str], samples: np.ndarray) -> dict[
     return out
 
 
-def _events(time: np.ndarray, contact: np.ndarray, foot_positions: np.ndarray) -> tuple[list[dict], list[dict]]:
+def _mean(rows: list[dict], key: str) -> float:
+    if not rows:
+        return 0.0
+    return float(np.mean([row[key] for row in rows]))
+
+
+def _last_mean(rows: list[dict], key: str, count: int) -> float:
+    if not rows:
+        return 0.0
+    return _mean(rows[-count:], key)
+
+
+def _std(rows: list[dict], key: str) -> float:
+    if not rows:
+        return 0.0
+    return float(np.std([row[key] for row in rows]))
+
+
+def _events(
+    time: np.ndarray,
+    contact: np.ndarray,
+    foot_positions: np.ndarray,
+    root_x: np.ndarray,
+) -> tuple[list[dict], list[dict], list[dict]]:
     events: list[dict] = []
     previous = contact[0]
     for i in range(1, len(time)):
@@ -160,18 +185,107 @@ def _events(time: np.ndarray, contact: np.ndarray, foot_positions: np.ndarray) -
             continue
         steps.append(
             {
-                "from_foot": prev["foot"],
-                "to_foot": current["foot"],
+                "step_foot": prev["foot"],
+                "start_foot": prev["foot"],
+                "end_foot": current["foot"],
                 "start_time": prev["time"],
                 "end_time": current["time"],
                 "duration_s": current["time"] - prev["time"],
                 "step_length_m": current["x"] - prev["x"],
+                "root_advance_m": float(root_x[current["frame"]] - root_x[prev["frame"]]),
                 "step_width_m": abs(current["y"] - prev["y"]),
                 "start_frame": prev["frame"],
                 "end_frame": current["frame"],
             }
         )
-    return events, steps
+
+    cycles: list[dict] = []
+    for foot in ("L", "R"):
+        foot_touchdowns = [event for event in touchdowns if event["foot"] == foot]
+        for prev, current in zip(foot_touchdowns, foot_touchdowns[1:]):
+            cycles.append(
+                {
+                    "cycle_foot": foot,
+                    "start_time": prev["time"],
+                    "end_time": current["time"],
+                    "duration_s": current["time"] - prev["time"],
+                    "cycle_length_m": current["x"] - prev["x"],
+                    "root_advance_m": float(root_x[current["frame"]] - root_x[prev["frame"]]),
+                    "start_frame": prev["frame"],
+                    "end_frame": current["frame"],
+                }
+            )
+    cycles.sort(key=lambda row: row["start_time"])
+    return events, steps, cycles
+
+
+def _add_support_metrics(
+    rows: list[dict],
+    contact: np.ndarray,
+    full_support: np.ndarray,
+    events: list[dict],
+    dt: float,
+    stance_key: str,
+) -> None:
+    toe_offs = [event for event in events if event["type"] == "toe_off"]
+    foot_index = {"L": 0, "R": 1}
+    for row in rows:
+        start_frame = row["start_frame"]
+        end_frame = row["end_frame"]
+        interval_contact = contact[start_frame:end_frame]
+        interval_full_support = full_support[start_frame:end_frame]
+        duration = max(row["duration_s"], 1.0e-6)
+
+        if interval_contact.size == 0:
+            double_support_duration = 0.0
+            single_support_l_duration = 0.0
+            single_support_r_duration = 0.0
+            airborne_duration = 0.0
+            full_support_duration = 0.0
+        else:
+            left_contact = interval_contact[:, 0]
+            right_contact = interval_contact[:, 1]
+            double_support_duration = float(np.sum(left_contact & right_contact) * dt)
+            single_support_l_duration = float(np.sum(left_contact & ~right_contact) * dt)
+            single_support_r_duration = float(np.sum(right_contact & ~left_contact) * dt)
+            airborne_duration = float(np.sum(~left_contact & ~right_contact) * dt)
+            stance_foot = row[stance_key]
+            stance_contact = interval_contact[:, foot_index[stance_foot]]
+            stance_duration = float(np.sum(stance_contact) * dt)
+            full_support_duration = float(np.sum(interval_full_support[:, foot_index[stance_foot]]) * dt)
+
+        if interval_contact.size == 0:
+            stance_duration = 0.0
+        swing_duration = max(duration - stance_duration, 0.0)
+        row["double_support_duration_s"] = double_support_duration
+        row["single_support_l_duration_s"] = single_support_l_duration
+        row["single_support_r_duration_s"] = single_support_r_duration
+        row["airborne_duration_s"] = airborne_duration
+        row["stance_duration_s"] = stance_duration
+        row["swing_duration_s"] = swing_duration
+        row["full_support_duration_s"] = full_support_duration
+        row["double_support_ratio"] = double_support_duration / duration
+        row["single_support_l_ratio"] = single_support_l_duration / duration
+        row["single_support_r_ratio"] = single_support_r_duration / duration
+        row["airborne_ratio"] = airborne_duration / duration
+        row["duty_factor"] = stance_duration / duration
+        row["swing_ratio"] = swing_duration / duration
+        row["full_support_ratio"] = full_support_duration / duration
+
+        opposite_foot = "R" if row[stance_key] == "L" else "L"
+        opposite_toe_off = next(
+            (
+                event
+                for event in toe_offs
+                if event["foot"] == opposite_foot
+                and row["start_frame"] <= event["frame"] <= row["end_frame"]
+            ),
+            None,
+        )
+        row["opposite_toe_off_time"] = opposite_toe_off["time"] if opposite_toe_off is not None else ""
+        row["landing_to_opposite_toe_off_s"] = (
+            opposite_toe_off["time"] - row["start_time"] if opposite_toe_off is not None else 0.0
+        )
 
 
 def _cycle_window_start(events: list[dict], cycle_count: int, dt: float) -> float:
@@ -232,7 +346,6 @@ def _html(summary: dict) -> str:
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, str(installed_version))
     env_cfg.scene.num_envs = args_cli.num_envs
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
@@ -249,9 +362,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(base_env, clip_actions=agent_cfg.clip_actions)
 
     if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = OnPolicyRunner(env, rsl_rl_train_cfg(agent_cfg.to_dict()), log_dir=None, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = DistillationRunner(env, rsl_rl_train_cfg(agent_cfg.to_dict()), log_dir=None, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     runner.load(checkpoint_path)
@@ -291,6 +404,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "pad_contact": [],
         "foot_pos": [],
         "foot_up_z": [],
+        "foot_forward_z": [],
+        "foot_lateral_z": [],
         "stance_slip": [],
     }
 
@@ -315,7 +430,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         foot_quat = robot.data.body_quat_w[0, foot_body_ids]
         up_b = torch.zeros(2, 3, device=foot_quat.device)
         up_b[:, 2] = 1.0
+        forward_b = torch.zeros(2, 3, device=foot_quat.device)
+        forward_b[:, 0] = 1.0
+        lateral_b = torch.zeros(2, 3, device=foot_quat.device)
+        lateral_b[:, 1] = 1.0
         up_z = quat_apply(foot_quat, up_b)[:, 2].detach().cpu().numpy()
+        forward_z = quat_apply(foot_quat, forward_b)[:, 2].detach().cpu().numpy()
+        lateral_z = quat_apply(foot_quat, lateral_b)[:, 2].detach().cpu().numpy()
         foot_vel = robot.data.body_lin_vel_w[0, foot_body_ids, :2].detach().cpu().numpy()
         stance_slip = np.linalg.norm(foot_vel, axis=1) * contact
 
@@ -334,6 +455,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         series["pad_contact"].append(pad_contact)
         series["foot_pos"].append(foot_pos)
         series["foot_up_z"].append(up_z)
+        series["foot_forward_z"].append(forward_z)
+        series["foot_lateral_z"].append(lateral_z)
         series["stance_slip"].append(stance_slip)
 
         with torch.inference_mode():
@@ -343,7 +466,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 policy.reset(dones)
 
     arrays = {key: np.asarray(value) for key, value in series.items()}
-    events, steps = _events(arrays["time"], arrays["contact"].astype(bool), arrays["foot_pos"])
+    events, steps, cycles = _events(
+        arrays["time"],
+        arrays["contact"].astype(bool),
+        arrays["foot_pos"],
+        arrays["root_x"],
+    )
     window_start = _cycle_window_start(events, args_cli.cycle_window, step_dt)
     window_mask = arrays["time"] >= window_start
     joint_window = arrays["joint_pos"][window_mask]
@@ -361,15 +489,43 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         heel_only = np.column_stack((pad_contact[:, 0] & ~pad_contact[:, 1], pad_contact[:, 2] & ~pad_contact[:, 3]))
     else:
         full_support = contact & (arrays["foot_up_z"] > 0.96)
-        toe_only = np.zeros_like(contact)
-        heel_only = np.zeros_like(contact)
+        not_flat = contact & (arrays["foot_up_z"] <= 0.96)
+        toe_only = not_flat & (arrays["foot_forward_z"] < -0.12)
+        heel_only = not_flat & (arrays["foot_forward_z"] > 0.12)
+    edge_walk = contact & (np.abs(arrays["foot_lateral_z"]) > 0.12)
+    inner_edge = np.column_stack(
+        (
+            edge_walk[:, 0] & (arrays["foot_lateral_z"][:, 0] < 0.0),
+            edge_walk[:, 1] & (arrays["foot_lateral_z"][:, 1] > 0.0),
+        )
+    )
+    outer_edge = np.column_stack(
+        (
+            edge_walk[:, 0] & (arrays["foot_lateral_z"][:, 0] > 0.0),
+            edge_walk[:, 1] & (arrays["foot_lateral_z"][:, 1] < 0.0),
+        )
+    )
+    _add_support_metrics(steps, contact, full_support, events, step_dt, "step_foot")
+    _add_support_metrics(cycles, contact, full_support, events, step_dt, "cycle_foot")
     distance = max(float(arrays["root_x"][-1] - arrays["root_x"][0]), 1.0e-6)
     yaw_drift = float(np.trapz(arrays["yaw_rate"], arrays["time"]))
     lateral_drift = float(arrays["root_y"][-1] - arrays["root_y"][0])
     speed_ratio = float(np.mean(arrays["vx"]) / max(np.mean(arrays["cmd_vx"]), 1.0e-6))
 
+    left_steps = [row for row in steps if row["step_foot"] == "L"]
+    right_steps = [row for row in steps if row["step_foot"] == "R"]
+    left_cycles = [row for row in cycles if row["cycle_foot"] == "L"]
+    right_cycles = [row for row in cycles if row["cycle_foot"] == "R"]
     step_lengths = [row["step_length_m"] for row in steps]
+    step_advances = [row["root_advance_m"] for row in steps]
     step_durations = [row["duration_s"] for row in steps]
+    cycle_lengths = [row["cycle_length_m"] for row in cycles]
+    cycle_advances = [row["root_advance_m"] for row in cycles]
+    cycle_durations = [row["duration_s"] for row in cycles]
+    left_cycle_duration_last5 = _last_mean(left_cycles, "duration_s", 5)
+    right_cycle_duration_last5 = _last_mean(right_cycles, "duration_s", 5)
+    left_step_duration_last5 = _last_mean(left_steps, "duration_s", 5)
+    right_step_duration_last5 = _last_mean(right_steps, "duration_s", 5)
     symmetry = _paired_joint_symmetry(joint_names, joint_window) if joint_window.size else {}
     scorecard = {
         "distance_m": distance,
@@ -394,10 +550,95 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "toe_only_fraction_right": float(np.mean(toe_only[:, 1])),
         "heel_only_fraction_left": float(np.mean(heel_only[:, 0])),
         "heel_only_fraction_right": float(np.mean(heel_only[:, 1])),
+        "sole_normal_z_mean_left": float(np.mean(arrays["foot_up_z"][:, 0])),
+        "sole_normal_z_mean_right": float(np.mean(arrays["foot_up_z"][:, 1])),
+        "stance_sole_tilt_l2_mean": float(np.mean((1.0 - np.square(arrays["foot_up_z"])) * contact)),
+        "toe_down_proxy_fraction_left": float(np.mean(toe_only[:, 0])),
+        "toe_down_proxy_fraction_right": float(np.mean(toe_only[:, 1])),
+        "heel_down_proxy_fraction_left": float(np.mean(heel_only[:, 0])),
+        "heel_down_proxy_fraction_right": float(np.mean(heel_only[:, 1])),
+        "edge_walk_proxy_fraction_left": float(np.mean(edge_walk[:, 0])),
+        "edge_walk_proxy_fraction_right": float(np.mean(edge_walk[:, 1])),
+        "inner_edge_proxy_fraction_left": float(np.mean(inner_edge[:, 0])),
+        "inner_edge_proxy_fraction_right": float(np.mean(inner_edge[:, 1])),
+        "outer_edge_proxy_fraction_left": float(np.mean(outer_edge[:, 0])),
+        "outer_edge_proxy_fraction_right": float(np.mean(outer_edge[:, 1])),
         "stance_slip_mean_mps": float(np.mean(arrays["stance_slip"])),
         "step_count": len(steps),
+        "left_step_count": len(left_steps),
+        "right_step_count": len(right_steps),
         "step_length_mean_m": float(np.mean(step_lengths)) if step_lengths else 0.0,
+        "step_root_advance_mean_m": float(np.mean(step_advances)) if step_advances else 0.0,
         "step_duration_mean_s": float(np.mean(step_durations)) if step_durations else 0.0,
+        "left_step_length_mean_m": _mean(left_steps, "step_length_m"),
+        "right_step_length_mean_m": _mean(right_steps, "step_length_m"),
+        "left_step_root_advance_mean_m": _mean(left_steps, "root_advance_m"),
+        "right_step_root_advance_mean_m": _mean(right_steps, "root_advance_m"),
+        "left_step_duration_mean_s": _mean(left_steps, "duration_s"),
+        "right_step_duration_mean_s": _mean(right_steps, "duration_s"),
+        "left_step_length_last5_mean_m": _last_mean(left_steps, "step_length_m", 5),
+        "right_step_length_last5_mean_m": _last_mean(right_steps, "step_length_m", 5),
+        "left_step_root_advance_last5_mean_m": _last_mean(left_steps, "root_advance_m", 5),
+        "right_step_root_advance_last5_mean_m": _last_mean(right_steps, "root_advance_m", 5),
+        "left_step_duration_last5_mean_s": _last_mean(left_steps, "duration_s", 5),
+        "right_step_duration_last5_mean_s": _last_mean(right_steps, "duration_s", 5),
+        "step_duration_std_s": _std(steps, "duration_s"),
+        "left_right_step_duration_error_mean_s": _mean(left_steps, "duration_s") - _mean(right_steps, "duration_s"),
+        "left_right_step_duration_error_last5_s": left_step_duration_last5 - right_step_duration_last5,
+        "step_double_support_ratio_mean": _mean(steps, "double_support_ratio"),
+        "left_step_double_support_ratio_mean": _mean(left_steps, "double_support_ratio"),
+        "right_step_double_support_ratio_mean": _mean(right_steps, "double_support_ratio"),
+        "step_full_support_ratio_mean": _mean(steps, "full_support_ratio"),
+        "left_step_full_support_ratio_mean": _mean(left_steps, "full_support_ratio"),
+        "right_step_full_support_ratio_mean": _mean(right_steps, "full_support_ratio"),
+        "left_step_full_support_ratio_last5_mean": _last_mean(left_steps, "full_support_ratio", 5),
+        "right_step_full_support_ratio_last5_mean": _last_mean(right_steps, "full_support_ratio", 5),
+        "left_landing_to_opposite_toe_off_last5_mean_s": _last_mean(
+            left_steps, "landing_to_opposite_toe_off_s", 5
+        ),
+        "right_landing_to_opposite_toe_off_last5_mean_s": _last_mean(
+            right_steps, "landing_to_opposite_toe_off_s", 5
+        ),
+        "cycle_count": len(cycles),
+        "left_cycle_count": len(left_cycles),
+        "right_cycle_count": len(right_cycles),
+        "cycle_length_mean_m": float(np.mean(cycle_lengths)) if cycle_lengths else 0.0,
+        "cycle_root_advance_mean_m": float(np.mean(cycle_advances)) if cycle_advances else 0.0,
+        "cycle_duration_mean_s": float(np.mean(cycle_durations)) if cycle_durations else 0.0,
+        "cycle_duration_std_s": _std(cycles, "duration_s"),
+        "cycle_cadence_hz": 1.0 / max(float(np.mean(cycle_durations)) if cycle_durations else 0.0, 1.0e-6),
+        "left_cycle_length_mean_m": _mean(left_cycles, "cycle_length_m"),
+        "right_cycle_length_mean_m": _mean(right_cycles, "cycle_length_m"),
+        "left_cycle_root_advance_mean_m": _mean(left_cycles, "root_advance_m"),
+        "right_cycle_root_advance_mean_m": _mean(right_cycles, "root_advance_m"),
+        "left_cycle_duration_mean_s": _mean(left_cycles, "duration_s"),
+        "right_cycle_duration_mean_s": _mean(right_cycles, "duration_s"),
+        "left_cycle_length_last5_mean_m": _last_mean(left_cycles, "cycle_length_m", 5),
+        "right_cycle_length_last5_mean_m": _last_mean(right_cycles, "cycle_length_m", 5),
+        "left_cycle_root_advance_last5_mean_m": _last_mean(left_cycles, "root_advance_m", 5),
+        "right_cycle_root_advance_last5_mean_m": _last_mean(right_cycles, "root_advance_m", 5),
+        "left_cycle_duration_last5_mean_s": _last_mean(left_cycles, "duration_s", 5),
+        "right_cycle_duration_last5_mean_s": _last_mean(right_cycles, "duration_s", 5),
+        "left_right_cycle_duration_error_mean_s": _mean(left_cycles, "duration_s") - _mean(right_cycles, "duration_s"),
+        "left_right_cycle_duration_error_last5_s": left_cycle_duration_last5 - right_cycle_duration_last5,
+        "cycle_double_support_ratio_mean": _mean(cycles, "double_support_ratio"),
+        "cycle_full_support_ratio_mean": _mean(cycles, "full_support_ratio"),
+        "left_stance_duration_mean_s": _mean(left_cycles, "stance_duration_s"),
+        "right_stance_duration_mean_s": _mean(right_cycles, "stance_duration_s"),
+        "left_swing_duration_mean_s": _mean(left_cycles, "swing_duration_s"),
+        "right_swing_duration_mean_s": _mean(right_cycles, "swing_duration_s"),
+        "left_duty_factor_mean": _mean(left_cycles, "duty_factor"),
+        "right_duty_factor_mean": _mean(right_cycles, "duty_factor"),
+        "left_swing_ratio_mean": _mean(left_cycles, "swing_ratio"),
+        "right_swing_ratio_mean": _mean(right_cycles, "swing_ratio"),
+        "left_stance_duration_last5_mean_s": _last_mean(left_cycles, "stance_duration_s", 5),
+        "right_stance_duration_last5_mean_s": _last_mean(right_cycles, "stance_duration_s", 5),
+        "left_swing_duration_last5_mean_s": _last_mean(left_cycles, "swing_duration_s", 5),
+        "right_swing_duration_last5_mean_s": _last_mean(right_cycles, "swing_duration_s", 5),
+        "left_duty_factor_last5_mean": _last_mean(left_cycles, "duty_factor", 5),
+        "right_duty_factor_last5_mean": _last_mean(right_cycles, "duty_factor", 5),
+        "left_cycle_full_support_ratio_last5_mean": _last_mean(left_cycles, "full_support_ratio", 5),
+        "right_cycle_full_support_ratio_last5_mean": _last_mean(right_cycles, "full_support_ratio", 5),
         **symmetry,
     }
     gates = {
@@ -443,7 +684,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     }
 
     _write_csv(output_dir / "step_events.csv", events)
-    _write_csv(output_dir / "gait_cycles.csv", steps)
+    _write_csv(output_dir / "gait_cycles.csv", cycles)
+    _write_csv(output_dir / "steps.csv", steps)
     (output_dir / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     lines = [f"# KBot Diagnostic Summary", "", f"Decision: {decision}", "", "## Scorecard"]
     lines.extend(f"- {key}: {value}" for key, value in scorecard.items())

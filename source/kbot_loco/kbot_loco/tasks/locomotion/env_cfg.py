@@ -12,7 +12,7 @@ from isaaclab.utils import configclass
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as base_mdp
 from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
 
-from .assets import KBOT_CFG, KBOT_PADS_CFG, REPO_ROOT
+from .assets import KBOT_CFG, REPO_ROOT
 from . import mdp
 
 
@@ -297,18 +297,18 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        self.scene.robot = KBOT_PADS_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        self.commands.base_velocity.ranges.lin_vel_x = (0.30, 0.50)
+        self.scene.robot = KBOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.commands.base_velocity.ranges.lin_vel_x = (0.15, 0.30)
         self.commands.base_velocity.resampling_time_range = (4.0, 8.0)
 
-        self.rewards.track_lin_vel_xy_exp.weight = 3.0
+        self.rewards.track_lin_vel_xy_exp.weight = 2.0
         self.rewards.track_ang_vel_z_exp.weight = 3.0
-        self.rewards.feet_air_time.weight = 1.25
+        self.rewards.feet_air_time.weight = 0.75
         self.rewards.alternating_foot_phase.weight = 0.25
         self.rewards.upright_alive = RewTerm(
             func=mdp.upright_alive,
-            weight=2.0,
-            params={"minimum_height": 0.55, "max_tilt": 0.45},
+            weight=8.0,
+            params={"minimum_height": 0.70, "max_tilt": 0.35},
         )
 
         self.rewards.flat_orientation_l2.weight = -15.0
@@ -319,8 +319,8 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
         self.rewards.root_lateral_tilt_ema_l2.weight = -350.0
         self.rewards.root_lateral_tilt_ema_l2.params["tau_s"] = 2.5
 
-        self.rewards.forward_velocity_below_l2.weight = -16.0
-        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.25
+        self.rewards.forward_velocity_below_l2.weight = -8.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.12
         self.rewards.foot_lateral_spacing_l1.weight = -5.0
         self.rewards.foot_signed_lateral_clearance_l1.weight = -20.0
         self.rewards.foot_lateral_lane_l1.weight = -5.0
@@ -339,7 +339,8 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
         self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.18
         self.rewards.foot_parallel_l2.weight = -1.0
         self.rewards.foot_toe_in_l2.weight = -6.0
-        self.rewards.foot_flat_l2.weight = -0.35
+        self.rewards.foot_flat_l2.weight = 0.0
+        self.rewards.stance_foot_flat_l2.func = mdp.single_stance_foot_flat_l2
         self.rewards.stance_foot_flat_l2.weight = -2.0
 
         self.rewards.hip_roll_yaw_position_l2.weight = -8.0
@@ -351,15 +352,16 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
             params={"tau_s": 5.0, "asset_cfg": SceneEntityCfg("robot", joint_names=[".*hip_roll.*"])},
         )
 
-        self.rewards.low_body_l2.weight = -40.0
-        self.rewards.low_body_l2.params["minimum_height"] = 0.60
+        self.rewards.base_height_l2.weight = -35.0
+        self.rewards.low_body_l2.weight = -120.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.70
         self.rewards.base_height_l2.params["target_height"] = 0.88
-        self.rewards.upright_alive.params["minimum_height"] = 0.65
+        self.rewards.upright_alive.params["minimum_height"] = 0.70
         self.rewards.knee_extension_l1.weight = -18.0
         self.rewards.knee_extension_l1.params["min_bend"] = 0.35
 
-        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.55})
-        self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.95})
+        self.terminations.low_body = None
+        self.terminations.bad_orientation = None
 
 
 @configclass
@@ -372,3 +374,274 @@ class KBotForwardFlatV2EnvCfg_PLAY(KBotForwardFlatV2EnvCfg):
         self.events.base_com = None
         self.commands.base_velocity.resampling_time_range = (10.0, 10.0)
         self.episode_length_s = 60.0
+
+
+@configclass
+class KBotForwardFlatV2ScratchHardEnvCfg(KBotForwardFlatV2EnvCfg):
+    """Scratch probe: keep posture rewards but restore hard fall cutoffs."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.05, 0.15)
+        self.rewards.forward_velocity_below_l2.weight = -4.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.05
+        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.55})
+        self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.95})
+
+
+@configclass
+class KBotForwardFlatV2ScratchStandEnvCfg(KBotForwardFlatV2EnvCfg):
+    """Scratch probe: first learn tall quiet support before asking for walking."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.05)
+        self.rewards.track_lin_vel_xy_exp.weight = 1.0
+        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.alternating_foot_phase.weight = 0.0
+        self.rewards.forward_velocity_below_l2.weight = 0.0
+        self.rewards.foot_sagittal_separation_l1.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = 0.0
+        self.rewards.stance_foot_flat_l2.weight = -1.0
+        self.rewards.base_height_l2.weight = -45.0
+        self.rewards.low_body_l2.weight = -160.0
+        self.rewards.upright_alive.weight = 10.0
+
+
+@configclass
+class KBotForwardFlatV2ScratchStandConservativeEnvCfg(KBotForwardFlatV2ScratchStandEnvCfg):
+    """Scratch probe: standing-first plus smaller action scale and reset noise."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.actions.joint_pos.scale = 0.10
+        self.events.reset_base.params["pose_range"] = {"x": (-0.02, 0.02), "y": (-0.02, 0.02), "yaw": (-0.02, 0.02)}
+        self.events.reset_base.params["velocity_range"] = {
+            "x": (-0.01, 0.01),
+            "y": (-0.01, 0.01),
+            "z": (-0.01, 0.01),
+            "roll": (-0.01, 0.01),
+            "pitch": (-0.01, 0.01),
+            "yaw": (-0.01, 0.01),
+        }
+        self.events.reset_robot_joints.params["position_range"] = (0.99, 1.01)
+
+
+@configclass
+class KBotForwardFlatV2ScratchBalanceEnvCfg(KBotForwardFlatV2ScratchStandConservativeEnvCfg):
+    """Scratch probe: balance-only survival before any gait shaping."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.actions.joint_pos.scale = 0.08
+        self.episode_length_s = 4.0
+
+        self.rewards.track_lin_vel_xy_exp.weight = 0.0
+        self.rewards.track_ang_vel_z_exp.weight = 0.0
+        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.alternating_foot_phase.weight = 0.0
+        self.rewards.foot_sagittal_separation_l1.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_l1.weight = 0.0
+        self.rewards.foot_lateral_spacing_l1.weight = -1.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -5.0
+        self.rewards.leg_frontal_plane_l1.weight = 0.0
+        self.rewards.foot_parallel_l2.weight = 0.0
+        self.rewards.foot_toe_in_l2.weight = 0.0
+        self.rewards.stance_foot_flat_l2.weight = 0.0
+
+        self.rewards.base_height_l2.weight = -60.0
+        self.rewards.base_height_l2.params["target_height"] = 0.78
+        self.rewards.low_body_l2.weight = -240.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.65
+        self.rewards.upright_alive.weight = 20.0
+        self.rewards.upright_alive.params["minimum_height"] = 0.65
+        self.rewards.upright_alive.params["max_tilt"] = 0.25
+        self.rewards.flat_orientation_l2.weight = -45.0
+        self.rewards.root_lateral_tilt_l2.weight = -120.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -500.0
+        self.rewards.hip_roll_yaw_position_l2.weight = -6.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -12.0
+        self.rewards.hip_roll_position_ema_5cycle_l2.weight = 0.0
+        self.rewards.termination_penalty.weight = -100.0
+
+        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.55})
+        self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.65})
+
+
+@configclass
+class KBotForwardFlatV2ScratchV1BootstrapEnvCfg(KBotForwardFlatEnvCfg):
+    """Scratch bootstrap that mirrors the first V1 run that learned past falling."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 1024
+        self.episode_length_s = 3.0
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.ranges.lin_vel_x = (0.10, 0.25)
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.5
+        self.rewards.track_lin_vel_xy_exp.params["std"] = math.sqrt(0.12)
+        self.rewards.track_ang_vel_z_exp.weight = 1.0
+        self.rewards.track_ang_vel_z_exp.params["std"] = math.sqrt(0.10)
+        self.rewards.action_rate_l2.weight = -0.025
+        self.rewards.feet_air_time.weight = 0.75
+        self.rewards.feet_air_time.params["threshold"] = 0.40
+        self.rewards.alternating_foot_phase.weight = 0.0
+        self.rewards.alive.weight = 5.0
+        self.rewards.base_height_l2.weight = -15.0
+        self.rewards.base_height_l2.params["target_height"] = 0.78
+
+        self.rewards.lateral_velocity_l2.weight = -2.0
+        self.rewards.yaw_rate_l2.weight = -0.5
+        self.rewards.root_lateral_tilt_l2.weight = 0.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = 0.0
+        self.rewards.world_heading_l2.weight = 0.0
+        self.rewards.forward_velocity_below_l2.weight = 0.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = 0.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_max_l1.weight = 0.0
+        self.rewards.leg_frontal_plane_l1.weight = 0.0
+        self.rewards.left_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.right_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.max_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.foot_sagittal_separation_l1.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = 0.0
+        self.rewards.foot_parallel_l2.weight = 0.0
+        self.rewards.foot_world_parallel_l2.weight = 0.0
+        self.rewards.foot_world_parallel_max_l2.weight = 0.0
+        self.rewards.foot_toe_in_l2.weight = 0.0
+        self.rewards.foot_flat_l2.weight = 0.0
+        self.rewards.stance_foot_flat_l2.weight = 0.0
+        self.rewards.wobble_joint_vel_l2.weight = 0.0
+        self.rewards.hip_roll_yaw_position_l2.weight = 0.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = 0.0
+
+        self.rewards.low_body_l2.weight = -30.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.45
+        self.rewards.knee_extension_l1.weight = -80.0
+        self.rewards.knee_extension_l1.params["min_bend"] = 0.50
+        self.rewards.termination_penalty.weight = -500.0
+
+        self.terminations.low_body = None
+        self.terminations.bad_orientation = None
+
+
+@configclass
+class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchStandConservativeEnvCfg):
+    """Scratch bootstrap from a hand-authored V1-derived standing pose."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 1024
+        self.scene.robot.init_state.pos = (0.0, 0.0, 0.733)
+        self.scene.robot.init_state.joint_pos.update(
+            {
+                "left_hip_pitch_04": 0.72,
+                "right_hip_pitch_04": -0.41,
+                "left_hip_roll_03": 0.10,
+                "right_hip_roll_03": -0.12,
+                "left_hip_yaw_03": 0.03,
+                "right_hip_yaw_03": -0.01,
+                "left_knee_04": 1.40,
+                "right_knee_04": -1.50,
+                "left_ankle_02": -0.698,
+                "right_ankle_02": 0.698,
+            }
+        )
+        self.actions.joint_pos.scale = 0.20
+        self.episode_length_s = 4.0
+
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.reset_base.params["pose_range"] = {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "yaw": (-0.01, 0.01)}
+        self.events.reset_base.params["velocity_range"] = {
+            "x": (-0.005, 0.005),
+            "y": (-0.005, 0.005),
+            "z": (-0.005, 0.005),
+            "roll": (-0.005, 0.005),
+            "pitch": (-0.005, 0.005),
+            "yaw": (-0.005, 0.005),
+        }
+        self.events.reset_robot_joints.params["position_range"] = (0.995, 1.005)
+
+        self.rewards.track_lin_vel_xy_exp.weight = 0.0
+        self.rewards.track_ang_vel_z_exp.weight = 0.0
+        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.alternating_foot_phase.weight = 0.0
+        self.rewards.forward_velocity_below_l2.weight = 0.0
+        self.rewards.foot_sagittal_separation_l1.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = 0.0
+        self.rewards.foot_lateral_spacing_l1.weight = 0.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_l1.weight = 0.0
+        self.rewards.leg_frontal_plane_l1.weight = 0.0
+        self.rewards.foot_parallel_l2.weight = 0.0
+        self.rewards.foot_toe_in_l2.weight = 0.0
+        self.rewards.stance_foot_flat_l2.weight = 0.0
+
+        self.rewards.base_height_l2.weight = -35.0
+        self.rewards.base_height_l2.params["target_height"] = 0.733
+        self.rewards.low_body_l2.weight = -120.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.55
+        self.rewards.upright_alive.weight = 12.0
+        self.rewards.upright_alive.params["minimum_height"] = 0.55
+        self.rewards.upright_alive.params["max_tilt"] = 0.50
+        self.rewards.flat_orientation_l2.weight = -20.0
+        self.rewards.root_lateral_tilt_l2.weight = -50.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -120.0
+        self.rewards.hip_roll_yaw_position_l2.weight = 0.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = 0.0
+        self.rewards.hip_roll_position_ema_5cycle_l2.weight = 0.0
+        self.rewards.knee_extension_l1.weight = 0.0
+        self.rewards.stand_joint_position_l2 = RewTerm(
+            func=mdp.joint_position_l2,
+            weight=-4.0,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"])},
+        )
+        self.rewards.termination_penalty.weight = -250.0
+
+        self.terminations.low_body = None
+        self.terminations.bad_orientation = None
+
+
+@configclass
+class KBotForwardFlatV2ScratchActionBootstrapEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
+    """Scratch bootstrap with a short V1-derived recovery-action prior."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.early_action_sequence_l2 = RewTerm(
+            func=mdp.early_action_sequence_l2,
+            weight=-1.0,
+            params={
+                "duration_s": 0.40,
+                "targets": [
+                    [0.2099, -0.1198, 0.1361, 1.2101, 0.4279, -0.6150, -2.7360, 3.1930, -2.3437, -0.8811],
+                    [5.1104, -2.9871, 1.3583, -0.7267, -0.1990, -1.2123, 5.0458, -1.9918, -5.4884, 6.2425],
+                    [1.1912, -2.8021, -5.1936, -0.8531, -4.0128, -0.1630, -1.4994, -3.4933, -3.1833, 4.3908],
+                ],
+            },
+        )
+
+
+@configclass
+class KBotForwardFlatV2ScratchActionBootstrapStrongEnvCfg(KBotForwardFlatV2ScratchActionBootstrapEnvCfg):
+    """Scratch bootstrap that makes the first-second recovery action prior dominant."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.early_action_sequence_l2.weight = -20.0
+        self.rewards.early_action_sequence_l2.params["duration_s"] = 1.0

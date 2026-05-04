@@ -31,7 +31,7 @@ import cli_args  # noqa: E402
 
 
 parser = argparse.ArgumentParser(description="Play an RSL-RL checkpoint with a trailing camera and speed HUD.")
-parser.add_argument("--video_length", type=int, default=3000, help="Length of the recorded video in steps.")
+parser.add_argument("--video_length", type=int, default=1500, help="Length of the recorded video in steps.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--agent", type=str, default="rsl_rl_cfg_entry_point", help="RL agent config entry point.")
@@ -41,6 +41,13 @@ parser.add_argument("--camera_height", type=float, default=-0.32, help="Camera h
 parser.add_argument("--target_distance", type=float, default=0.35, help="Look-at distance ahead of root in meters.")
 parser.add_argument("--target_height", type=float, default=-0.32, help="Look-at height relative to root in meters.")
 parser.add_argument("--camera_window_s", type=float, default=3.0, help="Rolling-average camera direction window in seconds.")
+parser.add_argument("--camera_cycle_window", type=int, default=5, help="Rolling-average camera direction window in full gait cycles.")
+parser.add_argument(
+    "--camera_window_mode",
+    choices=("cycles", "time"),
+    default="cycles",
+    help="Use last full gait cycles or a fixed seconds window for camera direction smoothing.",
+)
 parser.add_argument("--hud_window_s", type=float, default=3.0, help="Rolling-average HUD window in seconds.")
 parser.add_argument("--width", type=int, default=1280, help="Output video width.")
 parser.add_argument("--height", type=int, default=720, help="Output video height.")
@@ -52,6 +59,12 @@ parser.add_argument(
     help="Deprecated. The side view is now composed into the main output video.",
 )
 parser.add_argument("--metrics_output", type=str, default=None, help="Optional JSON path for rollout metric summary.")
+parser.add_argument(
+    "--fall_reset_height",
+    type=float,
+    default=0.0,
+    help="Reset the rollout only if root height falls to or below this value. Set below -100 to disable.",
+)
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real time if possible.")
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -73,10 +86,13 @@ from rsl_rl.runners import DistillationRunner, OnPolicyRunner  # noqa: E402
 import isaaclab_tasks  # noqa: F401,E402
 import kbot_loco  # noqa: F401,E402
 from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg, multi_agent_to_single_agent  # noqa: E402
+from isaaclab.sensors import ContactSensor  # noqa: E402
 from isaaclab.utils.assets import retrieve_file_path  # noqa: E402
 from isaaclab.utils.math import quat_apply  # noqa: E402
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg  # noqa: E402
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper  # noqa: E402
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
+
+from rsl_rl_compat import rsl_rl_train_cfg  # noqa: E402
 
 installed_version = version.parse(metadata.version("rsl-rl-lib"))
 
@@ -262,11 +278,43 @@ def _root_forward_xy(robot) -> torch.Tensor:
     return forward_w[:2] / torch.clamp(torch.linalg.norm(forward_w[:2]), min=1.0e-6)
 
 
-def _smooth_forward_xy(forward_window: deque[torch.Tensor], forward_xy: torch.Tensor) -> torch.Tensor:
+def _smooth_forward_xy(forward_window: deque[torch.Tensor], forward_xy: torch.Tensor, maxlen: int) -> torch.Tensor:
     forward_window.append(forward_xy.detach().clone())
+    _trim_deque(forward_window, maxlen)
     forward_stack = torch.stack(tuple(forward_window), dim=0)
     smoothed = torch.mean(forward_stack, dim=0)
     return smoothed / torch.clamp(torch.linalg.norm(smoothed), min=1.0e-6)
+
+
+def _trim_deque(values: deque, maxlen: int) -> None:
+    while len(values) > maxlen:
+        values.popleft()
+
+
+def _contact_body_ids(contact_sensor: ContactSensor, names: tuple[str, ...]) -> list[int]:
+    body_names = getattr(contact_sensor, "body_names", None)
+    if body_names is None:
+        body_names = getattr(contact_sensor.data, "body_names", None)
+    if body_names is not None:
+        return [list(body_names).index(name) for name in names]
+    return list(range(len(names)))
+
+
+def _camera_cycle_window_steps(
+    left_touchdown_frames: deque[int],
+    right_touchdown_frames: deque[int],
+    current_frame: int,
+    cycle_window: int,
+    fallback_steps: int,
+) -> int:
+    start_frames = []
+    if len(left_touchdown_frames) >= cycle_window + 1:
+        start_frames.append(left_touchdown_frames[-(cycle_window + 1)])
+    if len(right_touchdown_frames) >= cycle_window + 1:
+        start_frames.append(right_touchdown_frames[-(cycle_window + 1)])
+    if not start_frames:
+        return fallback_steps
+    return max(1, current_frame - min(start_frames) + 1)
 
 
 def _set_trailing_camera(
@@ -352,7 +400,6 @@ def _render_view_frame(env, width: int, height: int) -> np.ndarray | None:
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, str(installed_version))
     if args_cli.checkpoint is None:
         raise ValueError("--checkpoint is required for trailing-camera playback.")
     env_cfg.scene.num_envs = args_cli.num_envs
@@ -373,9 +420,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(base_env, clip_actions=agent_cfg.clip_actions)
 
     if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = OnPolicyRunner(env, rsl_rl_train_cfg(agent_cfg.to_dict()), log_dir=None, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = DistillationRunner(env, rsl_rl_train_cfg(agent_cfg.to_dict()), log_dir=None, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     runner.load(resume_path)
@@ -396,19 +443,25 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     obs = env.get_observations()
     robot = env.unwrapped.scene["robot"]
+    contact_sensor: ContactSensor = env.unwrapped.scene.sensors["contact_forces"]
+    contact_body_ids = _contact_body_ids(contact_sensor, ("foot1", "foot3"))
     command_manager = getattr(env.unwrapped, "command_manager", None)
     dt = env.unwrapped.step_dt
     hud_window_steps = max(1, int(round(args_cli.hud_window_s / dt)))
-    camera_window_steps = max(1, int(round(args_cli.camera_window_s / dt)))
+    fallback_camera_window_steps = max(1, int(round(args_cli.camera_window_s / dt)))
     speed_window: deque[float] = deque(maxlen=hud_window_steps)
     command_window: deque[float] = deque(maxlen=hud_window_steps)
     yaw_window: deque[float] = deque(maxlen=hud_window_steps)
     joint_pos_window: deque[np.ndarray] = deque(maxlen=hud_window_steps)
     torso_tilt_window: deque[float] = deque(maxlen=hud_window_steps)
     hip_roll_yaw_window: deque[np.ndarray] = deque(maxlen=hud_window_steps)
-    forward_window: deque[torch.Tensor] = deque(maxlen=camera_window_steps)
+    forward_window: deque[torch.Tensor] = deque()
+    left_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
+    right_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
+    previous_contact = torch.zeros(2, dtype=torch.bool, device=robot.data.root_pos_w.device)
     joint_names = list(robot.data.joint_names)
     hip_roll_yaw_ids = [i for i, name in enumerate(joint_names) if "hip_roll" in name or "hip_yaw" in name]
+    fall_reset_count = 0
     rollout_metrics: dict[str, list[float]] = {
         "speed": [],
         "command_speed": [],
@@ -420,9 +473,44 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "hip_roll_yaw_window_rms": [],
     }
 
-    for _ in range(args_cli.video_length):
+    for frame_index in range(args_cli.video_length):
         start_time = time.time()
-        forward_xy = _smooth_forward_xy(forward_window, _root_forward_xy(robot))
+        if frame_index > 0 and float(robot.data.root_pos_w[0, 2].item()) <= args_cli.fall_reset_height:
+            obs, _ = env.reset()
+            if installed_version >= version.parse("4.0.0"):
+                policy.reset(torch.ones(env.num_envs, dtype=torch.bool, device=env.unwrapped.device))
+            fall_reset_count += 1
+            previous_contact.zero_()
+            speed_window.clear()
+            command_window.clear()
+            yaw_window.clear()
+            joint_pos_window.clear()
+            torso_tilt_window.clear()
+            hip_roll_yaw_window.clear()
+            forward_window.clear()
+            left_touchdown_frames.clear()
+            right_touchdown_frames.clear()
+
+        foot_contact = contact_sensor.data.current_contact_time[0, contact_body_ids] > 0.0
+        touchdown = foot_contact & ~previous_contact
+        if bool(touchdown[0].item()):
+            left_touchdown_frames.append(frame_index)
+        if bool(touchdown[1].item()):
+            right_touchdown_frames.append(frame_index)
+        previous_contact = foot_contact.detach().clone()
+
+        camera_window_steps = (
+            _camera_cycle_window_steps(
+                left_touchdown_frames,
+                right_touchdown_frames,
+                frame_index,
+                args_cli.camera_cycle_window,
+                fallback_camera_window_steps,
+            )
+            if args_cli.camera_window_mode == "cycles"
+            else fallback_camera_window_steps
+        )
+        forward_xy = _smooth_forward_xy(forward_window, _root_forward_xy(robot), camera_window_steps)
         speed = float(robot.data.root_lin_vel_b[0, 0].item())
         yaw_rate = float(robot.data.root_ang_vel_b[0, 2].item())
         command_speed = 0.0
@@ -503,8 +591,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             actions = policy(obs)
             obs, _, dones, _ = env.step(actions)
-            if installed_version >= version.parse("4.0.0"):
-                policy.reset(dones)
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
@@ -521,6 +607,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "video_length_steps": args_cli.video_length,
             "dt": dt,
             "window_s": args_cli.hud_window_s,
+            "camera_window_mode": args_cli.camera_window_mode,
+            "camera_window_s_fallback": args_cli.camera_window_s,
+            "camera_cycle_window": args_cli.camera_cycle_window,
+            "fall_reset_height": args_cli.fall_reset_height,
+            "fall_reset_count": fall_reset_count,
+            "policy_reset_mode": "fall_reset_only",
             "joint_names": joint_names,
             "hip_roll_yaw_joint_names": [joint_names[index] for index in hip_roll_yaw_ids],
             "metrics": {

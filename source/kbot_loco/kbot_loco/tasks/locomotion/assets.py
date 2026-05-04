@@ -9,7 +9,7 @@ from isaaclab.assets.articulation import ArticulationCfg
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 KBOT_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top3.usd"
-KBOT_PADS_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top3_pads.usda"
+KBOT_PADS_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top3_pads.usd"
 
 HIP_PITCH_KNEE_ACTUATOR_CFG = DCMotorCfg(
     joint_names_expr=[".*hip_pitch.*", ".*knee.*"],
