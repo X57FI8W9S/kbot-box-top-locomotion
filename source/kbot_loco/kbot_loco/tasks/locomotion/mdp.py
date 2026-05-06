@@ -232,6 +232,38 @@ def foot_lateral_lane_max_l1(
     return torch.clamp(torch.max(foot_errors, dim=1).values - tolerance, min=0.0)
 
 
+def foot_sole_lateral_lane_max_l1(
+    env: ManagerBasedRLEnv,
+    target_left_y: float,
+    target_right_y: float,
+    tolerance: float,
+    foot_local_offsets: list[tuple[float, float, float]],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+) -> torch.Tensor:
+    """Penalize the worst sole-center body-frame lateral lane error."""
+    asset = env.scene[asset_cfg.name]
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    local_offsets = torch.tensor(foot_local_offsets, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+    sole_pos_w = foot_pos_w + quat_apply(
+        foot_quat_w.reshape(-1, 4), local_offsets[None, :, :].expand(env.num_envs, -1, -1).reshape(-1, 3)
+    ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
+
+    root_pos_w = asset.data.root_pos_w[:, None, :]
+    root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
+    sole_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (sole_pos_w - root_pos_w).reshape(-1, 3)).reshape(
+        env.num_envs, len(asset_cfg.body_ids), 3
+    )
+    sole_errors = torch.stack(
+        (
+            torch.abs(sole_pos_b[:, 0, 1] - target_left_y),
+            torch.abs(sole_pos_b[:, 1, 1] - target_right_y),
+        ),
+        dim=1,
+    )
+    return torch.clamp(torch.max(sole_errors, dim=1).values - tolerance, min=0.0)
+
+
 def leg_frontal_plane_l1(
     env: ManagerBasedRLEnv,
     tolerance: float,
@@ -308,6 +340,46 @@ def leg_frontal_plane_max_l1(
     """Penalize the worst individual shin/foot lateral deviation from its sagittal lane."""
     asset = env.scene[asset_cfg.name]
     body_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    root_pos_w = asset.data.root_pos_w[:, None, :]
+    root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
+    body_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (body_pos_w - root_pos_w).reshape(-1, 3)).reshape(
+        env.num_envs, len(asset_cfg.body_ids), 3
+    )
+
+    left_hip_y = body_pos_b[:, 0, 1]
+    right_hip_y = body_pos_b[:, 1, 1]
+    segment_errors = torch.stack(
+        (
+            torch.abs(body_pos_b[:, 2, 1] - left_hip_y),
+            torch.abs(body_pos_b[:, 4, 1] - left_hip_y),
+            torch.abs(body_pos_b[:, 3, 1] - right_hip_y),
+            torch.abs(body_pos_b[:, 5, 1] - right_hip_y),
+        ),
+        dim=1,
+    )
+    return torch.clamp(torch.max(segment_errors, dim=1).values - tolerance, min=0.0)
+
+
+def leg_frontal_sole_plane_max_l1(
+    env: ManagerBasedRLEnv,
+    tolerance: float,
+    foot_local_offsets: list[tuple[float, float, float]],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg(
+        "robot",
+        body_names=["leg0_shell", "leg0_shell_2", "leg3_shell1", "leg3_shell11", "foot1", "foot3"],
+        preserve_order=True,
+    ),
+) -> torch.Tensor:
+    """Penalize the worst hip-to-shin/sole lateral column error."""
+    asset = env.scene[asset_cfg.name]
+    body_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    body_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    local_offsets = torch.zeros(env.num_envs, len(asset_cfg.body_ids), 3, dtype=body_pos_w.dtype, device=body_pos_w.device)
+    local_offsets[:, 4:, :] = torch.tensor(foot_local_offsets, dtype=body_pos_w.dtype, device=body_pos_w.device)[None, :, :]
+    body_pos_w = body_pos_w + quat_apply(body_quat_w.reshape(-1, 4), local_offsets.reshape(-1, 3)).reshape(
+        env.num_envs, len(asset_cfg.body_ids), 3
+    )
+
     root_pos_w = asset.data.root_pos_w[:, None, :]
     root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
     body_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (body_pos_w - root_pos_w).reshape(-1, 3)).reshape(
@@ -543,6 +615,39 @@ def joint_position_l2(
     joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
     default_joint_pos = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
     return torch.sum(torch.square(joint_pos - default_joint_pos), dim=1)
+
+
+def mirrored_joint_position_l2(
+    env: ManagerBasedRLEnv,
+    joint_pairs: list[tuple[str, str, float]],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize persistent left/right joint asymmetry after mirror-sign normalization."""
+    asset = env.scene[asset_cfg.name]
+    name_to_id = {name: index for index, name in enumerate(asset.data.joint_names)}
+    penalty = torch.zeros(env.num_envs, dtype=asset.data.joint_pos.dtype, device=asset.data.joint_pos.device)
+    for left_name, right_name, mirror_sign in joint_pairs:
+        left_id = name_to_id[left_name]
+        right_id = name_to_id[right_name]
+        left_error = asset.data.joint_pos[:, left_id] - asset.data.default_joint_pos[:, left_id]
+        right_error = asset.data.joint_pos[:, right_id] - asset.data.default_joint_pos[:, right_id]
+        penalty += torch.square(left_error - mirror_sign * right_error)
+    return penalty
+
+
+def joint_target_position_l2(
+    env: ManagerBasedRLEnv,
+    targets: dict[str, float],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize deviation from an explicit centered posture target."""
+    asset = env.scene[asset_cfg.name]
+    name_to_id = {name: index for index, name in enumerate(asset.data.joint_names)}
+    penalty = torch.zeros(env.num_envs, dtype=asset.data.joint_pos.dtype, device=asset.data.joint_pos.device)
+    for joint_name, target in targets.items():
+        joint_id = name_to_id[joint_name]
+        penalty += torch.square(asset.data.joint_pos[:, joint_id] - target)
+    return penalty
 
 
 def joint_position_ema_l2(

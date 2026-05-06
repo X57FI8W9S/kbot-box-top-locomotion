@@ -48,10 +48,11 @@ Current checkpoint labels:
 ```text
 best all-time: logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt
 best all-time alternate: logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47/model_11990.pt
-best V2 so far: logs/rsl_rl/kbot_forward_flat/2026-05-04_05-31-04/model_999.pt, rejected by evaluator
+best V2 so far: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03/model_2795.pt, rejected by evaluator but best current speed/yaw/lateral/root-roll compromise
 standard testing mode from 2026-05-04 onward: headless diagnostics plus headless side-by-side trailing/side HUD video
 standard output video length from 2026-05-04 onward: 30 s / 1500 control steps
 playback reset policy from 2026-05-04 onward: no normal policy reset during video; only reset the rollout/policy if root height falls to or below 0.0 m
+HUD averaging from 2026-05-04 onward: overlay averages use the latest 5 full gait cycles once enough same-side touchdowns exist; the 3.0 s value is only a warmup fallback.
 ```
 
 V1 known remaining problems:
@@ -646,6 +647,109 @@ headless video: logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/videos/play/tr
 playback note: future output videos should be 30 s and continuous, with no policy reset except root-height fall reset at z <= 0.0 m
 30s continuous no-reset video: logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/videos/play/trailing-side-hud-model_1298-headless-v2-scratch-bootstrap-30s-continuous.mp4
 30s continuous no-reset metrics: video_length_steps = 1500, fall_reset_count = 0, policy_reset_mode = fall_reset_only
+```
+
+```text
+date: 2026-05-04
+run: V2 scratch bootstrap continued into full V2 rewards with centered-foot posture fix
+checkpoint: in progress, logs/rsl_rl/kbot_forward_flat/2026-05-04_15-59-46
+warm start: staged scratch only; resumed from logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/model_1298.pt, not from the rejected model_1797 checkpoint
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: added mirrored_joint_position_l2 for hip pitch/roll/yaw, knee, and ankle after mirror-sign normalization; re-enabled max foot lateral lane and per-side/max frontal-plane penalties; centered the scratch pose-bootstrap seed so it no longer starts from the asymmetric orange-frame posture
+why it was tried: the 2026-05-04 orange screenshot showed both feet biased inward from the start, with the right foot substantially too far left. Continuing the rejected model_1797 would reinforce that habit, so this branch restarts the gait stage from the anti-fall bootstrap model_1298 with explicit foot centering and L/R joint symmetry pressure.
+status: training started
+```
+
+```text
+date: 2026-05-04
+run: V2 centered-foot posture fix, reduced symmetry continuation
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-04_16-40-24/model_1797.pt
+warm start: staged scratch only; resumed from logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/model_1298.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: mirrored_joint_position_l2 kept with evaluator-consistent signs, but weight reduced to -3.0 so the anti-fall bootstrap is not shocked into a low-body/roll failure
+training result: recovered after the initial transition; final scalar reward about +21, timeout fraction 1.0, upright_alive about 7.99, low_body_l2 near zero, mirrored_joint_position_l2 about -0.90
+diagnostic result: evaluator rejected model_1797; speed_tracking_ratio 1.134 and yaw_drift_rad_per_m -0.188 passed, but lateral_drift_m_per_m -0.697 failed, hip_roll_mean_abs_5cycle_rad 0.044 failed, airborne_fraction 0.023 failed, and full_support_fraction_left/right remained 0.0
+decision: useful progression checkpoint, not keeper; continue from it to see if the improved speed/yaw can consolidate while symmetry and lane penalties keep improving posture.
+diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-04_16-40-24/diagnostics/model_1797_headless
+```
+
+```text
+date: 2026-05-04
+run: V2 centered-foot posture fix, second reduced-symmetry continuation
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-04_16-46-50/model_2296.pt
+warm start: continued from logs/rsl_rl/kbot_forward_flat/2026-05-04_16-40-24/model_1797.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+training result: stable continuation; final scalar reward about +22, timeout fraction 1.0, track_lin_vel_xy_exp about 1.29, low_body_l2 small, mirrored_joint_position_l2 about -0.83, foot_lateral_lane_max_l1 about -0.096, max_leg_frontal_plane_l1 about -0.303
+diagnostic result: evaluator rejected model_2296; speed_tracking_ratio 0.804 and yaw_drift_rad_per_m -0.246 passed, lateral_drift_m_per_m -0.585 failed, root_roll_mean_5cycle 0.030 failed, hip_roll_mean_abs_5cycle_rad 0.076 failed, full_support_fraction_left/right remained 0.0, edge_walk_proxy_fraction_left/right 0.973/0.975, and hip_pitch_mean_abs_error improved to 0.435 but is still too high
+video: logs/rsl_rl/kbot_forward_flat/2026-05-04_16-46-50/videos/play/trailing-side-hud-model_2296-headless-v2-centered-30s-continuous.mp4
+video metrics: fall_reset_count 0, policy_reset_mode fall_reset_only, speed_mean_mps 0.162, command_speed_mean_mps 0.201, hip_roll_yaw_window_mean_abs final 0.061
+decision: better than the direct full-V2 branch for walking speed and yaw, but not acceptable. Next change should target lateral drift and roll/edge contact directly, not simply keep extending this reward stack unchanged.
+diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-04_16-46-50/diagnostics/model_2296_headless
+```
+
+```text
+date: 2026-05-04
+run: V2 sole-center lane and flat-foot continuation from moving checkpoint
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03/model_2795.pt
+warm start: continued from logs/rsl_rl/kbot_forward_flat/2026-05-04_16-46-50/model_2296.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: added sole-center lane and hip-to-shin/sole frontal-column rewards using the heel/toe pad midpoint offsets, reduced foot_lateral_spacing_l1 from -5 to -2 so it cannot strongly pull feet together, weakened centered_joint_target_position_l2 from -2.0 to -0.5, and restored all-contact foot-flat pressure with foot_flat_l2 -1.0 and stance_foot_flat_l2 -6.0
+diagnostic result: evaluator returned REVIEW_VIDEO. Speed, yaw, lateral drift, root roll, alternating steps, and root height passed. speed_tracking_ratio 1.183, yaw_drift_rad_per_m -0.016, lateral_drift_m_per_m -0.023, root_roll_mean_5cycle 0.0027, root_height_p05_m 0.780. Hip-roll mean still failed at 0.098 rad and airborne failed at 0.235. Edge-walk proxy improved materially versus model_2296: left/right 0.343/0.423 instead of 0.973/0.975, but full-support proxies remain 0.0 because the default asset still has only whole-foot contact bodies.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03/videos/play/trailing-side-hud-model_2795-v2-sole-centered-flat-30s.mp4
+video metrics: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03/videos/play/trailing-side-hud-model_2795-v2-sole-centered-flat-30s.json
+decision: not approved, but this is the best V2 continuation so far for speed/yaw/lateral/root-roll while reducing edge walking. Next change should target hip-roll/airborne cadence without increasing standing/static posture pressure.
+diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03/diagnostics/model_2795_headless
+```
+
+```text
+date: 2026-05-04
+run: V2 extra continuation from model_2795 after orange3 review
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-04_20-45-25/model_3294.pt
+warm start: continued from logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03/model_2795.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+why it was tried: orange3 showed the policy improving but still not vertically aligned through the hip/foot columns. Continue training to test whether the current sole-center/frontal-column rewards would keep improving without another config change.
+diagnostic result: evaluator returned REVIEW_VIDEO. The continuation became faster and hip-roll improved slightly, but it did not replace model_2795. speed_tracking_ratio 1.345 versus 1.183, speed_mean_mps 0.271 versus 0.238, and hip_roll_mean_abs_5cycle_rad 0.095 versus 0.098. Regressions: lateral_drift_m_per_m -0.055 versus -0.023, root_roll_mean_5cycle -0.010 versus 0.0027, hip_yaw_mean_abs_5cycle_rad 0.014 versus 0.009, and right edge-walk proxy 0.438 versus 0.423. Airborne remains high at 0.228 and double support remains 0.0013.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-04_20-45-25/videos/play/trailing-side-hud-model_3294-v2-5cycle-sep-30s.mp4
+video metrics: logs/rsl_rl/kbot_forward_flat/2026-05-04_20-45-25/videos/play/trailing-side-hud-model_3294-v2-5cycle-sep-30s.json
+HUD change verified: the overlay no longer labels the main averages as a fixed 3.0 s window after gait is established. It uses the latest 5 full gait cycles, adds fixed-width L/R/full-cycle step time, step length, step rate, and adds sep = sole-center L/R y separation divided by the hip-roll body-origin y separation. leg0_shell and leg0_shell_2 are used as the hip-roll joint-axis proxy until exact joint-frame positions are exposed.
+decision: keep model_2795 as the selected V2 checkpoint. model_3294 is useful evidence that simply continuing this reward stack tends to trade alignment for speed and yaw/roll drift. Next change should adjust reward conflict rather than only adding iterations.
+diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-04_20-45-25/diagnostics/model_3294_headless
+```
+
+```text
+date: 2026-05-04
+run: V2 sole-center lane from anti-fall checkpoint, target pose too strong
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-07-44/model_1797.pt
+warm start: continued from logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/model_1298.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: added sole-center lane/frontal-column rewards and centered_joint_target_position_l2 at -2.0
+diagnostic result: evaluator returned REVIEW_VIDEO but the checkpoint is rejected as a walking policy. It fixed lateral drift but froze gait: speed_tracking_ratio 0.189, speed_mean_mps 0.038, double_support_fraction 0.971, step_count 12. Lateral drift passed at -0.041 and root height passed, but root roll and hip roll failed.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-07-44/videos/play/trailing-side-hud-model_1797-v2-sole-centered-30s.mp4
+decision: useful negative result. Sole-center lanes are directionally useful, but a strong explicit centered-pose target from the anti-fall checkpoint suppresses gait. Resume from a moving checkpoint and keep the target-pose term weak.
+diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-07-44/diagnostics/model_1797_headless
+```
+
+```text
+date: 2026-05-04
+run: V2 centered-foot posture fix, corrected hip-pitch sign too strong
+checkpoint: stopped early, logs/rsl_rl/kbot_forward_flat/2026-05-04_16-37-58
+warm start: staged scratch only; resumed from logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/model_1298.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: corrected hip_pitch mirror_sign to +1.0 and corrected the pose-bootstrap hip-pitch seed
+result: stopped early; mirrored_joint_position_l2 at weight -18 shocked the anti-fall bootstrap, quickly driving mirrored-joint penalty into roughly -60, low_body_l2 into large negative values, and reward near -900 despite timeout survival
+decision: keep the correct hip-pitch sign, but reduce mirrored_joint_position_l2 to -3.0 so it acts as a regularizer while foot_lateral_lane_max_l1 and per-side/max frontal-plane terms do the direct centering.
+```
+
+```text
+date: 2026-05-04
+run: V2 centered-foot posture fix, first attempt rejected
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-04_15-59-46/model_1797.pt
+warm start: staged scratch only; resumed from logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/model_1298.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+diagnostic result: evaluator rejected model_1797; speed_tracking_ratio 0.097, yaw_drift_rad_per_m 0.409, hip_roll_mean_abs_5cycle_rad 0.065, double_support_fraction 0.977, step_count 11, step_length_mean_m 0.041, root height passed, lateral drift passed
+important correction: this attempt used the wrong mirror sign for hip_pitch in mirrored_joint_position_l2. The evaluator's established sign convention is hip_pitch +1.0, hip_roll/hip_yaw/knee/ankle -1.0, so the branch is not a valid keeper. The centered pose-bootstrap seed was also corrected to use matching left/right hip-pitch signs.
+decision: reject and restart the gait-stage continuation from model_1298 after fixing hip_pitch mirror_sign to +1.0 and the pose-bootstrap hip-pitch sign.
+diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-04_15-59-46/diagnostics/model_1797_headless
 ```
 
 ```text

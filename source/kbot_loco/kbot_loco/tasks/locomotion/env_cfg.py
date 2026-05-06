@@ -321,17 +321,46 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
 
         self.rewards.forward_velocity_below_l2.weight = -8.0
         self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.12
-        self.rewards.foot_lateral_spacing_l1.weight = -5.0
+        self.rewards.foot_lateral_spacing_l1.weight = -2.0
         self.rewards.foot_signed_lateral_clearance_l1.weight = -20.0
         self.rewards.foot_lateral_lane_l1.weight = -5.0
         self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.04
-        self.rewards.foot_lateral_lane_max_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_max_l1.weight = -8.0
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.015
+        sole_center_offsets = [
+            (0.03, -0.036528655, -0.0194786795),
+            (0.03, -0.036528755, -0.0234786545),
+        ]
+        self.rewards.foot_sole_lateral_lane_max_l1 = RewTerm(
+            func=mdp.foot_sole_lateral_lane_max_l1,
+            weight=-8.0,
+            params={
+                "target_left_y": 0.12,
+                "target_right_y": -0.12,
+                "tolerance": 0.01,
+                "foot_local_offsets": sole_center_offsets,
+                "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+            },
+        )
 
         self.rewards.leg_frontal_plane_l1.weight = -4.0
         self.rewards.leg_frontal_plane_l1.params["tolerance"] = 0.04
-        self.rewards.left_leg_frontal_plane_l1.weight = 0.0
-        self.rewards.right_leg_frontal_plane_l1.weight = 0.0
-        self.rewards.max_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.left_leg_frontal_plane_l1.weight = -3.0
+        self.rewards.right_leg_frontal_plane_l1.weight = -5.0
+        self.rewards.max_leg_frontal_plane_l1.weight = -10.0
+        self.rewards.leg_frontal_sole_plane_max_l1 = RewTerm(
+            func=mdp.leg_frontal_sole_plane_max_l1,
+            weight=-10.0,
+            params={
+                "tolerance": 0.008,
+                "foot_local_offsets": sole_center_offsets,
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    body_names=["leg0_shell", "leg0_shell_2", "leg3_shell1", "leg3_shell11", "foot1", "foot3"],
+                    preserve_order=True,
+                ),
+            },
+        )
 
         self.rewards.foot_sagittal_separation_l1.weight = -3.0
         self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.22
@@ -339,9 +368,9 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
         self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.18
         self.rewards.foot_parallel_l2.weight = -1.0
         self.rewards.foot_toe_in_l2.weight = -6.0
-        self.rewards.foot_flat_l2.weight = 0.0
-        self.rewards.stance_foot_flat_l2.func = mdp.single_stance_foot_flat_l2
-        self.rewards.stance_foot_flat_l2.weight = -2.0
+        self.rewards.foot_flat_l2.weight = -1.0
+        self.rewards.stance_foot_flat_l2.func = mdp.stance_foot_flat_l2
+        self.rewards.stance_foot_flat_l2.weight = -6.0
 
         self.rewards.hip_roll_yaw_position_l2.weight = -8.0
         self.rewards.hip_roll_yaw_position_ema_l2.weight = -24.0
@@ -350,6 +379,37 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
             func=mdp.joint_position_ema_l2,
             weight=-90.0,
             params={"tau_s": 5.0, "asset_cfg": SceneEntityCfg("robot", joint_names=[".*hip_roll.*"])},
+        )
+        self.rewards.mirrored_joint_position_l2 = RewTerm(
+            func=mdp.mirrored_joint_position_l2,
+            weight=-3.0,
+            params={
+                "joint_pairs": [
+                    ("left_hip_pitch_04", "right_hip_pitch_04", 1.0),
+                    ("left_hip_roll_03", "right_hip_roll_03", -1.0),
+                    ("left_hip_yaw_03", "right_hip_yaw_03", -1.0),
+                    ("left_knee_04", "right_knee_04", -1.0),
+                    ("left_ankle_02", "right_ankle_02", -1.0),
+                ],
+            },
+        )
+        self.rewards.centered_joint_target_position_l2 = RewTerm(
+            func=mdp.joint_target_position_l2,
+            weight=-0.5,
+            params={
+                "targets": {
+                    "left_hip_pitch_04": 0.62,
+                    "right_hip_pitch_04": 0.62,
+                    "left_hip_roll_03": 0.02,
+                    "right_hip_roll_03": -0.02,
+                    "left_hip_yaw_03": 0.0,
+                    "right_hip_yaw_03": 0.0,
+                    "left_knee_04": 1.20,
+                    "right_knee_04": -1.20,
+                    "left_ankle_02": -0.65,
+                    "right_ankle_02": 0.65,
+                },
+            },
         )
 
         self.rewards.base_height_l2.weight = -35.0
@@ -543,16 +603,16 @@ class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchStandC
         self.scene.robot.init_state.pos = (0.0, 0.0, 0.733)
         self.scene.robot.init_state.joint_pos.update(
             {
-                "left_hip_pitch_04": 0.72,
-                "right_hip_pitch_04": -0.41,
-                "left_hip_roll_03": 0.10,
-                "right_hip_roll_03": -0.12,
-                "left_hip_yaw_03": 0.03,
-                "right_hip_yaw_03": -0.01,
-                "left_knee_04": 1.40,
-                "right_knee_04": -1.50,
-                "left_ankle_02": -0.698,
-                "right_ankle_02": 0.698,
+                "left_hip_pitch_04": 0.62,
+                "right_hip_pitch_04": 0.62,
+                "left_hip_roll_03": 0.02,
+                "right_hip_roll_03": -0.02,
+                "left_hip_yaw_03": 0.0,
+                "right_hip_yaw_03": 0.0,
+                "left_knee_04": 1.20,
+                "right_knee_04": -1.20,
+                "left_ankle_02": -0.65,
+                "right_ankle_02": 0.65,
             }
         )
         self.actions.joint_pos.scale = 0.20
