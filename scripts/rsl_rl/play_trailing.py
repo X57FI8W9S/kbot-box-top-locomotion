@@ -261,9 +261,9 @@ def _draw_hud(
     _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (x + 118, 96), width=13, scale=0.38)
     _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (x + 238, 96), width=13, scale=0.38)
     _put_fixed(frame, f"sep {_format_float(sep_ratio, 5, 2)}", (x + 358, 96), width=10, scale=0.38)
-    _put_fixed(frame, window_label, (panel_x1 - 88, 50), width=11, scale=0.38, color=(190, 210, 235))
+    _put_fixed(frame, window_label, (x + 472, 96), width=11, scale=0.38, color=(190, 210, 235))
 
-    gait_x = x + 286
+    gait_x = max(x + 842, panel_x1 - 236)
     _put_fixed(frame, "gait       t     m    Hz", (gait_x, 42), width=24, scale=0.34, color=(190, 210, 235))
     for label, row_y in (("L", 58), ("R", 74), ("C", 90)):
         row = step_stats[label]

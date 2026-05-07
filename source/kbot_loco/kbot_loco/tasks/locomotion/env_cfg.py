@@ -321,23 +321,26 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
 
         self.rewards.forward_velocity_below_l2.weight = -8.0
         self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.12
-        self.rewards.foot_lateral_spacing_l1.weight = -2.0
-        self.rewards.foot_signed_lateral_clearance_l1.weight = -20.0
-        self.rewards.foot_lateral_lane_l1.weight = -5.0
+        self.rewards.foot_lateral_spacing_l1.weight = 0.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -8.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.26
+        self.rewards.foot_lateral_lane_l1.weight = 0.0
         self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.04
-        self.rewards.foot_lateral_lane_max_l1.weight = -8.0
+        self.rewards.foot_lateral_lane_max_l1.weight = 0.0
         self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.015
+        hip_axis_left_y = 0.15835
+        hip_axis_right_y = -0.15805
         sole_center_offsets = [
             (0.03, -0.036528655, -0.0194786795),
             (0.03, -0.036528755, -0.0234786545),
         ]
         self.rewards.foot_sole_lateral_lane_max_l1 = RewTerm(
             func=mdp.foot_sole_lateral_lane_max_l1,
-            weight=-8.0,
+            weight=-14.0,
             params={
-                "target_left_y": 0.12,
-                "target_right_y": -0.12,
-                "tolerance": 0.01,
+                "target_left_y": hip_axis_left_y,
+                "target_right_y": hip_axis_right_y,
+                "tolerance": 0.008,
                 "foot_local_offsets": sole_center_offsets,
                 "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
             },
@@ -350,7 +353,7 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
         self.rewards.max_leg_frontal_plane_l1.weight = -10.0
         self.rewards.leg_frontal_sole_plane_max_l1 = RewTerm(
             func=mdp.leg_frontal_sole_plane_max_l1,
-            weight=-10.0,
+            weight=-14.0,
             params={
                 "tolerance": 0.008,
                 "foot_local_offsets": sole_center_offsets,

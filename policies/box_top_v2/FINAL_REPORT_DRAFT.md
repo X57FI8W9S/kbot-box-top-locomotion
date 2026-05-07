@@ -730,6 +730,31 @@ diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-04_19-07-44/diagnostics/model
 ```
 
 ```text
+date: 2026-05-05
+run: V2 scratch reboot, anti-fall bootstrap with corrected hip-axis lane code staged for gait
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-05_23-43-35_v2_reboot_bootstrap_hip_axis_offsets/model_1299.pt
+warm start: none
+task id: Isaac-KBot-Forward-Flat-V2-Scratch-V1Bootstrap-v0
+code/config change: kept the original scratch V1-bootstrap-style anti-fall curriculum; corrected hip-axis sole-lane targets are not active in this bootstrap task and are reserved for the following full V2 gait stage
+training result: completed 1300 iterations cleanly. The policy recovered upright support similarly to the first V2 bootstrap: final timeout fraction 1.0, base_height_l2 about -0.13, low_body_l2 about -0.06, flat_orientation_l2 about -0.21, and mean reward about +11.7.
+decision: usable staged scratch bootstrap only. Continue into full V2 gait rewards from this checkpoint; do not treat it as a walking policy.
+```
+
+```text
+date: 2026-05-05
+run: V2 reboot first gait-stage continuation with corrected hip-axis sole-lane targets
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-05_23-54-37_v2_reboot_gait_hip_axis_offsets_from_1299/model_1750.pt
+warm start: staged scratch only; resumed from logs/rsl_rl/kbot_forward_flat/2026-05-05_23-43-35_v2_reboot_bootstrap_hip_axis_offsets/model_1299.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: foot_sole_lateral_lane_max_l1 now targets the actual hip-roll joint-axis lateral positions, left +0.15835 m and right -0.15805 m, using sole-center offsets; old body-origin lane and spacing terms are disabled so they no longer pull feet toward +/-0.12 m
+training result: intended 500-iteration branch crashed at iteration 1773 with PPO value loss becoming NaN and torch rejecting a negative/invalid Normal distribution std. Latest clean checkpoint before the crash is model_1750.pt.
+diagnostic result: evaluator rejected model_1750. It preserved root height but failed gait: speed_tracking_ratio 0.008, distance 0.118 m in 30 s, double_support_fraction 0.985, step_count 4, yaw_drift_rad_per_m -0.610, lateral_drift_m_per_m 0.999, edge_walk_proxy_fraction_left/right 0.992/0.991, hip_roll_mean_abs_5cycle_rad 0.086, hip_yaw_mean_abs_5cycle_rad 0.067.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-05_23-54-37_v2_reboot_gait_hip_axis_offsets_from_1299/videos/play/trailing-side-hud-model_1750-v2-reboot-hip-axis-offsets-30s.mp4
+video metrics: logs/rsl_rl/kbot_forward_flat/2026-05-05_23-54-37_v2_reboot_gait_hip_axis_offsets_from_1299/videos/play/trailing-side-hud-model_1750-v2-reboot-hip-axis-offsets-30s.json
+decision: reject. Correcting the lane target removes the known geometric error, but the full V2 gait-stage reward still shocks the scratch bootstrap into a mostly stationary edge-contact strategy and PPO instability. Next restart should keep the corrected offsets but soften the gait-stage transition or lower PPO/action noise before adding another 500-iteration branch.
+```
+
+```text
 date: 2026-05-04
 run: V2 centered-foot posture fix, corrected hip-pitch sign too strong
 checkpoint: stopped early, logs/rsl_rl/kbot_forward_flat/2026-05-04_16-37-58
