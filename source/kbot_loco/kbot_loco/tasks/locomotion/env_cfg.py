@@ -348,8 +348,8 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
 
         self.rewards.leg_frontal_plane_l1.weight = -4.0
         self.rewards.leg_frontal_plane_l1.params["tolerance"] = 0.04
-        self.rewards.left_leg_frontal_plane_l1.weight = -3.0
-        self.rewards.right_leg_frontal_plane_l1.weight = -5.0
+        self.rewards.left_leg_frontal_plane_l1.weight = -4.0
+        self.rewards.right_leg_frontal_plane_l1.weight = -4.0
         self.rewards.max_leg_frontal_plane_l1.weight = -10.0
         self.rewards.leg_frontal_sole_plane_max_l1 = RewTerm(
             func=mdp.leg_frontal_sole_plane_max_l1,

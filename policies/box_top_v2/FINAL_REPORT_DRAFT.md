@@ -755,6 +755,44 @@ decision: reject. Correcting the lane target removes the known geometric error, 
 ```
 
 ```text
+date: 2026-05-06
+run: V2.1 scratch reboot after equalizing L/R frontal-plane weights
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-06_23-25-25_v2_1_bootstrap_equal_lr_frontal/model_1299.pt
+warm start: none
+task id: Isaac-KBot-Forward-Flat-V2-Scratch-V1Bootstrap-v0
+code/config change: equalized full-V2 left_leg_frontal_plane_l1 and right_leg_frontal_plane_l1 from -3.0/-5.0 to -4.0/-4.0; the scratch bootstrap task still keeps these terms disabled
+why it was tried: orange5 suggested a persistent lean, and the unequal per-side full-V2 frontal-plane weights were a likely reward asymmetry
+training result: completed 1300 iterations cleanly. The run reproduced the successful V1-style anti-fall bootstrap pattern: early low-body timeout survival recovered by the end, with timeout fraction 1.0, base_height_l2 about -0.36, low_body_l2 about -0.20, and mean reward about +9.0 at iteration 1299.
+geometry check: one-step V2 probe confirmed foot/body order is sane: foot1 is left/positive-y, foot3 is right/negative-y, leg0_shell/leg0_shell_2 are the hip proxy pair, and leg3_shell1/leg3_shell11 are the lower-leg proxy pair. The full V2 reward table confirmed left/right frontal-plane weights are both -4.0.
+decision: usable staged scratch bootstrap only. Continue into full V2 gait rewards to test whether the equalized per-side frontal-plane pressure changes the lean/gait failure.
+```
+
+```text
+date: 2026-05-06
+run: V2.1 gait continuation from equal-L/R scratch bootstrap
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-06_23-36-57_v2_1_gait_equal_lr_from_1299/model_1798.pt
+warm start: staged scratch only; resumed from logs/rsl_rl/kbot_forward_flat/2026-05-06_23-25-25_v2_1_bootstrap_equal_lr_frontal/model_1299.pt
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: full V2 gait stage with equalized left/right frontal-plane weights active at -4.0/-4.0
+training result: completed 500 continuation iterations without the PPO NaN seen in the previous reboot branch. The transition still shocked the bootstrap into poor gait/posture terms early, then recovered root height and timeout survival. Final training scalars included low_body_l2 about 0.0, upright_alive about 8.0, but yaw/heading and action-rate penalties remained large.
+diagnostic result: evaluator rejected model_1798. It stayed upright but barely moved: speed_tracking_ratio 0.029, speed_mean_mps 0.0058 versus command_speed_mean_mps 0.201, yaw_drift_rad_per_m -0.796, lateral_drift_m_per_m -0.274, double_support_fraction 0.979, step_count 10, hip_roll_mean_abs_5cycle_rad 0.052, edge_walk_proxy_fraction_left/right 0.987/0.986, root_height_p05_m 0.789.
+decision: reject as a gait policy. Equalizing the per-side frontal-plane weights removed a real suspicious asymmetry and avoided PPO NaN in this branch, but it did not solve the main failure. The current full-V2 gait stage still produces a mostly stationary double-support edge-contact strategy. Next useful change should soften or split the gait transition rather than keep extending the same full reward stack.
+diagnostics: logs/rsl_rl/kbot_forward_flat/2026-05-06_23-36-57_v2_1_gait_equal_lr_from_1299/diagnostics/model_1798
+```
+
+```text
+date: 2026-05-06
+run: V2.1 full-V2 training from policy iteration zero with equal L/R frontal-plane weights
+checkpoint: logs/rsl_rl/kbot_forward_flat/2026-05-06_23-49-21_v2_1_full_v2_from_zero_equal_lr/model_350.pt
+warm start: none
+task id: Isaac-KBot-Forward-Flat-V2-v0
+code/config change: same equalized full-V2 left/right frontal-plane weights, no resume, no scratch bootstrap checkpoint
+why it was tried: user requested a true policy restart from learning iteration 0 rather than a continuation from the anti-fall bootstrap
+training result: failed. The run started at Learning iteration 0/1000 and did not load a checkpoint. It quickly reached 400-step timeout episodes while staying in a low/collapsed posture. By iteration 349-363, low_body_l2 was still about -130 to -117 and base_height_l2 about -51 to -47. PPO value loss exploded, became NaN at iteration 363, and training crashed with torch rejecting an invalid Normal distribution std. Latest saved checkpoint before crash is model_350.pt.
+decision: reject and do not continue this branch. Equalizing L/R frontal-plane weights does not make direct full-V2-from-zero training viable. This reinforces the staged curriculum lesson: the anti-fall bootstrap is not optional unless the full-V2 reward/noise/termination setup is redesigned.
+```
+
+```text
 date: 2026-05-04
 run: V2 centered-foot posture fix, corrected hip-pitch sign too strong
 checkpoint: stopped early, logs/rsl_rl/kbot_forward_flat/2026-05-04_16-37-58
