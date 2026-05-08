@@ -20,6 +20,7 @@ Design notes:
 
 ```text
 design/diagnostics_plan.md
+BOOTSTRAP_REPORT.md
 FINAL_REPORT_DRAFT.md
 ```
 

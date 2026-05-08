@@ -49,6 +49,17 @@ def lateral_velocity_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scen
     return torch.square(asset.data.root_lin_vel_b[:, 1])
 
 
+def root_lateral_position_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize lateral root displacement from the environment origin."""
+    asset = env.scene[asset_cfg.name]
+    env_origins = getattr(env.scene, "env_origins", None)
+    if env_origins is None:
+        lateral_pos = asset.data.root_pos_w[:, 1]
+    else:
+        lateral_pos = asset.data.root_pos_w[:, 1] - env_origins[:, 1]
+    return torch.square(lateral_pos)
+
+
 def yaw_rate_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize body-frame yaw rate for straight-line walking."""
     asset = env.scene[asset_cfg.name]

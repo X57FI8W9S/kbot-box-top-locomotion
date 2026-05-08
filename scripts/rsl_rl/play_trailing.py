@@ -239,7 +239,7 @@ def _draw_hud(
     hip_rms: float,
     window_label: str,
     step_stats: dict[str, dict[str, float]],
-    sep_ratio: float,
+    sep_m: float,
 ) -> np.ndarray:
     frame = np.ascontiguousarray(frame)
     height, width = frame.shape[:2]
@@ -260,21 +260,25 @@ def _draw_hud(
     _put_fixed(frame, f"torR {_format_float(torso_rms, 6, 3)}", (x, 96), width=13, scale=0.38)
     _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (x + 118, 96), width=13, scale=0.38)
     _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (x + 238, 96), width=13, scale=0.38)
-    _put_fixed(frame, f"sep {_format_float(sep_ratio, 5, 2)}", (x + 358, 96), width=10, scale=0.38)
+    _put_fixed(frame, f"sep {_format_float(sep_m, 5, 2)}", (x + 358, 96), width=10, scale=0.38)
     _put_fixed(frame, window_label, (x + 472, 96), width=11, scale=0.38, color=(190, 210, 235))
 
-    gait_x = max(x + 842, panel_x1 - 236)
-    _put_fixed(frame, "gait       t     m    Hz", (gait_x, 42), width=24, scale=0.34, color=(190, 210, 235))
+    gait_x = max(x + 842, panel_x1 - 252)
+    gait_label_x = gait_x
+    gait_t_x = gait_x + 62
+    gait_m_x = gait_x + 112
+    gait_hz_x = gait_x + 168
+    cv2.putText(frame, "gait", (gait_label_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
+    cv2.putText(frame, "t", (gait_t_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
+    cv2.putText(frame, "m", (gait_m_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
+    cv2.putText(frame, "Hz", (gait_hz_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
     for label, row_y in (("L", 58), ("R", 74), ("C", 90)):
         row = step_stats[label]
-        _put_fixed(
-            frame,
-            f"{label} {_format_float(row['time_s'], 5, 2)} {_format_float(row['length_m'], 5, 2)} {_format_float(row['rate_hz'], 5, 2)}",
-            (gait_x, row_y),
-            width=22,
-            scale=0.34,
-            color=(230, 240, 255),
-        )
+        color = (230, 240, 255)
+        cv2.putText(frame, label, (gait_label_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
+        cv2.putText(frame, f"{row['time_s']:0.2f}", (gait_t_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
+        cv2.putText(frame, f"{row['length_m']:0.2f}", (gait_m_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
+        cv2.putText(frame, f"{row['rate_hz']:0.2f}", (gait_hz_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
 
     left_x = x + 575
     right_x = x + 708
@@ -541,7 +545,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     joint_pos_window: deque[np.ndarray] = deque()
     torso_tilt_window: deque[float] = deque()
     hip_roll_yaw_window: deque[np.ndarray] = deque()
-    sep_ratio_window: deque[float] = deque()
+    sep_window: deque[float] = deque()
     forward_window: deque[torch.Tensor] = deque()
     left_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
     right_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
@@ -551,7 +555,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     hip_roll_yaw_ids = [i for i, name in enumerate(joint_names) if "hip_roll" in name or "hip_yaw" in name]
     body_names = list(robot.body_names)
     foot_body_ids = [body_names.index("foot1"), body_names.index("foot3")]
-    hip_body_ids = [body_names.index("leg0_shell"), body_names.index("leg0_shell_2")]
     sole_center_offsets = torch.tensor(
         [(0.03, -0.036528655, -0.0194786795), (0.03, -0.036528755, -0.0234786545)],
         dtype=robot.data.body_pos_w.dtype,
@@ -567,6 +570,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "torso_tilt_window_rms": [],
         "hip_roll_yaw_window_mean_abs": [],
         "hip_roll_yaw_window_rms": [],
+        "sep_m": [],
     }
 
     for frame_index in range(args_cli.video_length):
@@ -583,6 +587,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             joint_pos_window.clear()
             torso_tilt_window.clear()
             hip_roll_yaw_window.clear()
+            sep_window.clear()
             forward_window.clear()
             left_touchdown_frames.clear()
             right_touchdown_frames.clear()
@@ -641,12 +646,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         root_pos_w = robot.data.root_pos_w[0:1]
         root_quat_w = robot.data.root_quat_w[0:1].expand(2, -1)
         sole_pos_b = quat_apply_inverse(root_quat_w, sole_pos_w - root_pos_w)
-        hip_pos_b = quat_apply_inverse(root_quat_w, robot.data.body_pos_w[0, hip_body_ids] - root_pos_w)
         foot_sep_y = abs(float(sole_pos_b[0, 1].item() - sole_pos_b[1, 1].item()))
-        hip_sep_y = abs(float(hip_pos_b[0, 1].item() - hip_pos_b[1, 1].item()))
-        sep_ratio = foot_sep_y / hip_sep_y if hip_sep_y > 1.0e-6 else float("nan")
-        sep_ratio_window.append(sep_ratio)
-        for values in (speed_window, command_window, yaw_window, joint_pos_window, torso_tilt_window, hip_roll_yaw_window, sep_ratio_window):
+        sep_window.append(foot_sep_y)
+        for values in (speed_window, command_window, yaw_window, joint_pos_window, torso_tilt_window, hip_roll_yaw_window, sep_window):
             _trim_deque(values, hud_window_steps)
         torso_tilt_window_array = np.asarray(tuple(torso_tilt_window), dtype=np.float32)
         hip_roll_yaw_window_array = np.concatenate(tuple(hip_roll_yaw_window))
@@ -662,12 +664,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         rollout_metrics["torso_tilt_window_rms"].append(torso_tilt_window_rms)
         rollout_metrics["hip_roll_yaw_window_mean_abs"].append(hip_roll_yaw_window_mean_abs)
         rollout_metrics["hip_roll_yaw_window_rms"].append(hip_roll_yaw_window_rms)
+        rollout_metrics["sep_m"].append(foot_sep_y)
 
         hud_joint_pos = np.mean(np.stack(tuple(joint_pos_window), axis=0), axis=0)
         hud_speed = float(np.mean(speed_window))
         hud_command_speed = float(np.mean(command_window))
         hud_yaw_rate = float(np.mean(yaw_window))
-        hud_sep_ratio = float(np.mean(sep_ratio_window))
+        hud_sep_m = float(np.mean(sep_window))
         hud_step_stats = _recent_step_stats(touchdown_events, args_cli.camera_cycle_window, dt)
 
         _set_trailing_camera(
@@ -706,7 +709,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hip_roll_yaw_window_rms,
                 hud_window_label,
                 hud_step_stats,
-                hud_sep_ratio,
+                hud_sep_m,
             )
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
@@ -734,7 +737,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "camera_window_s_fallback": args_cli.camera_window_s,
             "camera_cycle_window": args_cli.camera_cycle_window,
             "final_hud_window_label": hud_window_label,
-            "final_hud_sep_ratio": hud_sep_ratio,
+            "final_hud_sep_m": hud_sep_m,
             "final_hud_step_stats": hud_step_stats,
             "fall_reset_height": args_cli.fall_reset_height,
             "fall_reset_count": fall_reset_count,

@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 
 
+POLICY_ONLY_RESUME = "--policy_only_resume" in sys.argv
+if POLICY_ONLY_RESUME:
+    sys.argv.remove("--policy_only_resume")
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ISAACLAB_ROOT = REPO_ROOT / "isaac_lab" / "IsaacLab"
 ISAAC_RSL_RL_DIR = REPO_ROOT / "isaac_lab" / "IsaacLab" / "scripts" / "reinforcement_learning" / "rsl_rl"
@@ -43,6 +47,7 @@ cli_args.update_rsl_rl_cfg = _update_rsl_rl_cfg_with_device
 
 _on_policy_runner_init = OnPolicyRunner.__init__
 _distillation_runner_init = DistillationRunner.__init__
+_on_policy_runner_load = OnPolicyRunner.load
 
 
 def _on_policy_runner_init_compat(self, env, train_cfg, log_dir=None, device="cpu"):
@@ -53,7 +58,14 @@ def _distillation_runner_init_compat(self, env, train_cfg, log_dir=None, device=
     return _distillation_runner_init(self, env, rsl_rl_train_cfg(train_cfg), log_dir=log_dir, device=device)
 
 
+def _on_policy_runner_load_compat(self, path, load_cfg=None, strict=True, map_location=None):
+    if POLICY_ONLY_RESUME and load_cfg is None:
+        load_cfg = {"actor": True, "critic": True, "optimizer": False, "iteration": True, "rnd": False}
+    return _on_policy_runner_load(self, path, load_cfg=load_cfg, strict=strict, map_location=map_location)
+
+
 OnPolicyRunner.__init__ = _on_policy_runner_init_compat
 DistillationRunner.__init__ = _distillation_runner_init_compat
+OnPolicyRunner.load = _on_policy_runner_load_compat
 
 runpy.run_path(str(ISAAC_RSL_RL_DIR / "train.py"), run_name="__main__")

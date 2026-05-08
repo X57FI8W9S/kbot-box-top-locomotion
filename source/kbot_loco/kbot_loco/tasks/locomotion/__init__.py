@@ -96,6 +96,56 @@ gym.register(
 )
 
 gym.register(
+    id="Isaac-KBot-Forward-Flat-V2-GaitTransition-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV2GaitTransitionEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Isaac-KBot-Forward-Flat-V2-YawLateralTransition-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV2YawLateralTransitionEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Isaac-KBot-Forward-Flat-V2-LateralCleanup-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV2LateralCleanupEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Isaac-KBot-Forward-Flat-V2-LateralCleanup-FineTune-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV2LateralCleanupEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatFineTunePPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Isaac-KBot-Forward-Flat-V2-HipContactCleanup-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV2HipContactCleanupEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Isaac-KBot-Forward-Flat-V2-Scratch-PoseBootstrap-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,

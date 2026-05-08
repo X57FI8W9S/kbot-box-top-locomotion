@@ -44,3 +44,29 @@ class KBotForwardFlatConservativePPORunnerCfg(KBotForwardFlatPPORunnerCfg):
         critic_hidden_dims=[256, 128, 128],
         activation="elu",
     )
+
+
+@configclass
+class KBotForwardFlatFineTunePPORunnerCfg(KBotForwardFlatPPORunnerCfg):
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=0.05,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
+        actor_hidden_dims=[256, 128, 128],
+        critic_hidden_dims=[256, 128, 128],
+        activation="elu",
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.08,
+        entropy_coef=0.002,
+        num_learning_epochs=3,
+        num_mini_batches=4,
+        learning_rate=1.0e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.004,
+        max_grad_norm=0.5,
+    )
