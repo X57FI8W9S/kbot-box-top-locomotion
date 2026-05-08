@@ -887,6 +887,128 @@ evidence: Continuing model_1298 into Isaac-KBot-Forward-Flat-V2-v0 reached stabl
 what changed because of it: Do not jump directly from anti-fall bootstrap to full V2 as the main path. Insert a gait-progression stage focused on root advance, alternating heel-strike events, and practical step length before applying the full posture/alignment stack.
 ```
 
+```text
+lesson: The old lateral foot rewards were geometrically too narrow for the current hip axes.
+evidence: The inherited foot_lateral_spacing_l1 and foot_lateral_lane_l1 targets pulled toward about 0.24 m separation: target_width = 0.24 and target_left_y/right_y = +/-0.12. The hip-axis reference is about 2 * 0.1582 = 0.3164 m. A width-fixed branch, model_3349, moved the HUD/body-frame sep to mean 0.296 m, p95 0.319 m, and final 0.308 m, while the old step-length branch model_3399 stayed near mean sep 0.239 m because it still inherited the old narrow lateral targets.
+what changed because of it: V2.3 should use the hip-axis lateral reference from the start. Use target_width = 0.3164, target_left_y = +0.1582, target_right_y = -0.1582, and keep minimum_width as a crossing/collapse floor rather than the main attractor.
+```
+
+```text
+lesson: Correcting sep alone is not enough; the policy can buy wider feet with hip roll and lateral drift.
+evidence: model_3349_width improved speed_tracking_ratio to 0.938 and sep to near the hip-axis target, but lateral_drift_m_per_m worsened to -0.345 and hip_roll_mean_abs_5cycle rose to 0.078 rad. The follow-up hip-axis-width stabilization branch, model_3299, reduced hip roll to 0.044 rad but still had lateral_drift_m_per_m -0.365 and did not improve step length.
+what changed because of it: Do not continue either width-fix branch as a keeper lineage. Restart V2.3 from iteration zero using the known staged bootstrap, with a low-weight sep fix present early and stronger root/hip/yaw constraints introduced gradually after the anti-fall seed exists.
+```
+
+```text
+lesson: orange9 confirms the width fix and the new failure mode visually.
+evidence: screenshots/orange9.jpg shows HUD sep about 0.30 m and height about 0.79 m, matching the corrected hip-axis target and root-height metrics. The same frame shows hipR average about 0.071 and visible lateral leg/body offset, consistent with the model_3349 diagnostic rejection.
+what changed because of it: Treat sep as fixed in the reward geometry, but gate/shape lateral drift and hip roll more carefully in the staged V2.3 continuation.
+```
+
+## 10.1 V2.2 Late Probe Summary
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_02-16-23_v2_2_step_length_cleanup_from_3200
+checkpoint: model_3399.pt
+warm start: policy-only resume from model_3200.pt
+task id: Isaac-KBot-Forward-Flat-V2-StepLengthCleanup-v0
+why it was tried: lengthen tiny rapid steps while preserving the current straight/upright gait.
+result: REJECT/REVIEW_VIDEO quality, worse than model_3200 on the important metrics. speed_tracking_ratio 0.700, step_length_mean_m 0.011, cycle_length_mean_m 0.023, hip_roll_mean_abs_5cycle_rad 0.048.
+decision: do not continue. This branch still inherited the old narrow lateral target, so it did not address the sep geometry problem.
+```
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_02-26-16_v2_2_cadence_length_cleanup_from_3200
+checkpoint: model_3349.pt
+warm start: policy-only resume from model_3200.pt
+task id: Isaac-KBot-Forward-Flat-V2-CadenceLengthCleanup-v0
+why it was tried: correct lateral sep to hip-axis width and slow the rapid shuffle.
+result: evaluator REJECT. sep geometry improved: HUD/body-frame sep mean 0.296 m, p95 0.319 m, final 0.308 m against target 0.3164 m. But lateral drift and hip roll worsened: lateral_drift_m_per_m -0.345, hip_roll_mean_abs_5cycle_rad 0.078.
+decision: confirms the sep target fix is correct, but not a keeper policy.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-08_02-26-16_v2_2_cadence_length_cleanup_from_3200/videos/play/trailing-hud-model_3349-v2_2-cadence-length-widthfix.mp4
+image: screenshots/orange9.jpg
+```
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_02-30-58_v2_2_hip_axis_width_cleanup_from_3200
+checkpoint: model_3299.pt
+warm start: policy-only resume from model_3200.pt
+task id: Isaac-KBot-Forward-Flat-V2-HipAxisWidthCleanup-v0
+why it was tried: isolate the hip-axis width target while restoring stronger root/yaw/hip stabilization.
+result: evaluator REJECT. speed_tracking_ratio 0.917 and hip_roll_mean_abs_5cycle_rad 0.044, but lateral_drift_m_per_m remained bad at -0.365 and step_length_mean_m stayed about 0.013.
+decision: do not continue. The policy needs the corrected sep target during staged scratch training, not as a late correction bolted onto model_3200.
+```
+
+## 10.2 V2.3 Restart Plan
+
+```text
+policy label: V2.3
+start: true iteration zero
+main lesson carried forward: use the bootstrap report's staged recipe; do not start full V2 from zero
+new correction carried forward: hip-axis lateral sep target from the first stage
+stage 1 task: Isaac-KBot-Forward-Flat-V2_3-Scratch-V1Bootstrap-v0
+stage 1 run name: v2_3_bootstrap_from_zero_sepfix
+stage 1 purpose: reproduce the reliable 3 s anti-fall bootstrap while preventing the old 0.24 m foot-separation attractor from entering the lineage
+stage 1 sep settings: target_width = 0.3164, target_left_y = +0.1582, target_right_y = -0.1582, minimum_width = 0.24
+stage 1 caution: sep terms must stay weak in the anti-fall phase; this stage is still an anti-fall seed, not walking
+stage 2 direction: continue only after anti-fall succeeds, using a gentle gait transition with the same hip-axis sep reference
+```
+
+## 10.3 V2.3 Restart Result
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_03-41-49_v2_3_bootstrap_from_zero_sepfix
+checkpoint: model_1299.pt
+task id: Isaac-KBot-Forward-Flat-V2_3-Scratch-V1Bootstrap-v0
+start: true policy iteration zero, no checkpoint resume
+why it was tried: restart from the bootstrap report's known 3 s anti-fall recipe while carrying the corrected hip-axis sep target from the first policy update.
+sep fix: target_width = 0.3164, target_left_y = +0.1582, target_right_y = -0.1582, minimum_width = 0.24. Weights were kept weak during anti-fall bootstrap: foot_lateral_spacing_l1 -0.25, foot_signed_lateral_clearance_l1 -0.75, foot_lateral_lane_l1 -0.20, foot_lateral_lane_max_l1 -0.05.
+training result: completed 1300 iterations from scratch. Final logged iteration 1299/1300 had mean reward about +12.76, mean episode length 150 steps, timeout fraction 1.0, base_height_l2 about -0.2805, low_body_l2 about -0.0447, termination penalty 0.0, velocity xy error about 0.0667, yaw error about 0.1555.
+interpretation: valid anti-fall seed. This is not a keeper walking checkpoint. It should feed a V2.3 gait transition stage, not final evaluation.
+```
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_03-52-45_v2_3_gait_transition_from_1299_sepfix
+checkpoint: model_1798.pt
+task id: Isaac-KBot-Forward-Flat-V2_3-GaitTransition-v0
+warm start: model_1299.pt from v2_3_bootstrap_from_zero_sepfix
+why it was tried: continue the fresh V2.3 anti-fall seed into the bootstrap report's gentle gait-transition stage while preserving the corrected hip-axis sep target.
+training result: completed 500 continuation iterations. Final logged iteration 1798/1799 had mean reward about +9.39, mean episode length 200 steps, timeout fraction 1.0, base_height_l2 about -0.1301, low_body_l2 about -0.0486, termination penalty 0.0, velocity xy error about 0.0768, yaw error about 0.2382.
+diagnostic result: evaluator REJECT. speed_tracking_ratio 0.142, speed_mean_mps 0.0266 against command 0.1874, yaw_drift_rad_per_m 1.122, lateral_drift_m_per_m 0.375, hip_roll_mean_abs_5cycle_rad 0.336, hip_yaw_mean_abs_5cycle_rad 0.423, step_length_mean_m 0.0167, root_height_mean_m 0.732.
+interpretation: the stage survives and keeps height, but the first gait-transition continuation overuses hip roll/yaw and does not produce useful forward walking. Do not promote model_1798 as a keeper.
+```
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_04-01-18_v2_3_gait_transition_continue_from_1798_sepfix
+checkpoint: model_2297.pt
+task id: Isaac-KBot-Forward-Flat-V2_3-GaitTransition-v0
+warm start: model_1798.pt from v2_3_gait_transition_from_1299_sepfix
+why it was tried: continue the same gentle gait-transition stage to see whether the initially rejected model_1798 was just too early.
+training result: completed 500 more continuation iterations. Final logged iteration 2297/2298 had mean reward about +16.95, mean episode length 200 steps, timeout fraction 1.0, base_height_l2 about -0.0243, low_body_l2 0.0, termination penalty 0.0, velocity xy error about 0.0594, yaw error about 0.1673.
+diagnostic result: evaluator REVIEW_VIDEO. speed_tracking_ratio 0.993, speed_mean_mps 0.186 against command 0.187, yaw_drift_rad_per_m -0.051, lateral_drift_m_per_m -0.163, root_height_mean_m 0.746, step_length_mean_m 0.0296, cycle_length_mean_m 0.0612, double_support_fraction 0.678. Hip geometry remained bad: hip_roll_mean_abs_5cycle_rad 0.348, hip_yaw_mean_abs_5cycle_rad 0.493.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-08_04-01-18_v2_3_gait_transition_continue_from_1798_sepfix/videos/play/trailing-hud-model_2297-v2_3-gait-transition-continue.mp4
+interpretation: strong proof that the fresh V2.3 lineage can recover forward speed after bootstrap, but the gait-transition reward has no active hip roll/yaw penalty, so further training on this exact stage is likely to preserve or worsen the hip-axis abuse.
+```
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_04-08-49_v2_3_hip_axis_posture_cleanup_from_2297
+checkpoint: model_2596.pt
+task id: Isaac-KBot-Forward-Flat-V2-HipAxisWidthCleanup-v0
+warm start: model_2297.pt from v2_3_gait_transition_continue_from_1798_sepfix
+why it was tried: continue into a stricter hip-axis posture stage that keeps the corrected 0.3164 m sep target while activating hip roll/yaw, root lateral tilt, yaw, and root lateral position penalties.
+training result: completed 300 continuation iterations. Final logged iteration 2596/2597 had mean reward about -9.31 under the stricter penalty stack, mean episode length 200 steps, timeout fraction 1.0, termination penalty 0.0, velocity xy error about 0.0722, yaw error about 0.1639. The logged hip_roll_yaw penalties fell substantially during the run, from about -3.5/-3.1 early to about -1.46/-1.18 near the end.
+diagnostic result: evaluator REVIEW_VIDEO. speed_tracking_ratio 0.944, speed_mean_mps 0.177 against command 0.187, yaw_drift_rad_per_m 0.008, lateral_drift_m_per_m -0.166, root_height_mean_m 0.726, step_length_mean_m 0.0299, cycle_length_mean_m 0.0553, double_support_fraction 0.551. Hip geometry improved but still fails: hip_roll_mean_abs_5cycle_rad 0.196 and hip_yaw_mean_abs_5cycle_rad 0.146.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-08_04-08-49_v2_3_hip_axis_posture_cleanup_from_2297/videos/play/trailing-hud-model_2596-v2_3-hip-axis-posture-cleanup.mp4
+interpretation: this is better than model_2297 on hip roll/yaw and support timing, but it gave up support width in the HUD rollout: sep mean 0.209 m and final 5-cycle sep about 0.225 m, below the 0.3164 m target. It is not a keeper yet. The next continuation should keep hip posture pressure but restore stronger width/lane enforcement and start lengthening steps gradually.
+```
+
 ## 11. Open Questions
 
 - Where did the current actuator parameters originate: Robstride datasheet, KBot repo, hand tuning, or earlier manual guess?

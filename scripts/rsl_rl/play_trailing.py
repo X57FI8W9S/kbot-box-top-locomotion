@@ -232,6 +232,7 @@ def _draw_hud(
     speed: float,
     command_speed: float,
     yaw_rate: float,
+    root_height: float,
     joint_names: list[str],
     joint_pos: np.ndarray,
     torso_mean: float,
@@ -257,6 +258,7 @@ def _draw_hud(
     cv2.putText(frame, f"{speed:5.2f} m/s", (x + 72, top_y), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2)
     _put_fixed(frame, f"cmd {_format_float(command_speed, 5, 2)}", (x, 74), width=10, scale=0.40)
     _put_fixed(frame, f"yaw {_format_float(yaw_rate, 6, 2)}", (x + 108, 74), width=11, scale=0.40)
+    _put_fixed(frame, f"hgt {_format_float(root_height, 5, 2)}", (x + 238, 74), width=10, scale=0.40)
     _put_fixed(frame, f"torR {_format_float(torso_rms, 6, 3)}", (x, 96), width=13, scale=0.38)
     _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (x + 118, 96), width=13, scale=0.38)
     _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (x + 238, 96), width=13, scale=0.38)
@@ -542,6 +544,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     speed_window: deque[float] = deque()
     command_window: deque[float] = deque()
     yaw_window: deque[float] = deque()
+    root_height_window: deque[float] = deque()
     joint_pos_window: deque[np.ndarray] = deque()
     torso_tilt_window: deque[float] = deque()
     hip_roll_yaw_window: deque[np.ndarray] = deque()
@@ -565,6 +568,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "speed": [],
         "command_speed": [],
         "yaw_rate": [],
+        "root_height": [],
+        "root_height_window_mean": [],
         "torso_tilt": [],
         "torso_tilt_window_mean": [],
         "torso_tilt_window_rms": [],
@@ -584,6 +589,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             speed_window.clear()
             command_window.clear()
             yaw_window.clear()
+            root_height_window.clear()
             joint_pos_window.clear()
             torso_tilt_window.clear()
             hip_roll_yaw_window.clear()
@@ -623,6 +629,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         forward_xy = _smooth_forward_xy(forward_window, _root_forward_xy(robot), camera_window_steps)
         speed = float(robot.data.root_lin_vel_b[0, 0].item())
         yaw_rate = float(robot.data.root_ang_vel_b[0, 2].item())
+        root_height = float(robot.data.root_pos_w[0, 2].item())
         command_speed = 0.0
         if command_manager is not None:
             try:
@@ -632,6 +639,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         speed_window.append(speed)
         command_window.append(command_speed)
         yaw_window.append(yaw_rate)
+        root_height_window.append(root_height)
         joint_pos = robot.data.joint_pos[0].detach().cpu().numpy()
         torso_tilt = float(robot.data.projected_gravity_b[0, 1].item())
         joint_pos_window.append(joint_pos)
@@ -648,10 +656,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         sole_pos_b = quat_apply_inverse(root_quat_w, sole_pos_w - root_pos_w)
         foot_sep_y = abs(float(sole_pos_b[0, 1].item() - sole_pos_b[1, 1].item()))
         sep_window.append(foot_sep_y)
-        for values in (speed_window, command_window, yaw_window, joint_pos_window, torso_tilt_window, hip_roll_yaw_window, sep_window):
+        for values in (
+            speed_window,
+            command_window,
+            yaw_window,
+            root_height_window,
+            joint_pos_window,
+            torso_tilt_window,
+            hip_roll_yaw_window,
+            sep_window,
+        ):
             _trim_deque(values, hud_window_steps)
         torso_tilt_window_array = np.asarray(tuple(torso_tilt_window), dtype=np.float32)
         hip_roll_yaw_window_array = np.concatenate(tuple(hip_roll_yaw_window))
+        root_height_window_mean = float(np.mean(root_height_window))
         torso_tilt_window_mean = float(np.mean(torso_tilt_window_array))
         torso_tilt_window_rms = float(np.sqrt(np.mean(np.square(torso_tilt_window_array))))
         hip_roll_yaw_window_mean_abs = float(np.mean(np.abs(hip_roll_yaw_window_array)))
@@ -659,6 +677,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         rollout_metrics["speed"].append(speed)
         rollout_metrics["command_speed"].append(command_speed)
         rollout_metrics["yaw_rate"].append(yaw_rate)
+        rollout_metrics["root_height"].append(root_height)
+        rollout_metrics["root_height_window_mean"].append(root_height_window_mean)
         rollout_metrics["torso_tilt"].append(torso_tilt)
         rollout_metrics["torso_tilt_window_mean"].append(torso_tilt_window_mean)
         rollout_metrics["torso_tilt_window_rms"].append(torso_tilt_window_rms)
@@ -670,6 +690,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         hud_speed = float(np.mean(speed_window))
         hud_command_speed = float(np.mean(command_window))
         hud_yaw_rate = float(np.mean(yaw_window))
+        hud_root_height = root_height_window_mean
         hud_sep_m = float(np.mean(sep_window))
         hud_step_stats = _recent_step_stats(touchdown_events, args_cli.camera_cycle_window, dt)
 
@@ -702,6 +723,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hud_speed,
                 hud_command_speed,
                 hud_yaw_rate,
+                hud_root_height,
                 joint_names,
                 hud_joint_pos,
                 torso_tilt_window_mean,

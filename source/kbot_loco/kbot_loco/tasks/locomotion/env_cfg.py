@@ -597,6 +597,27 @@ class KBotForwardFlatV2ScratchV1BootstrapEnvCfg(KBotForwardFlatEnvCfg):
 
 
 @configclass
+class KBotForwardFlatV23ScratchV1BootstrapEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
+    """V2.3 anti-fall bootstrap with the corrected hip-axis support width."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.foot_lateral_spacing_l1.weight = -0.25
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -0.75
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -0.20
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.08
+        self.rewards.foot_lateral_lane_max_l1.weight = -0.05
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.06
+
+
+@configclass
 class KBotForwardFlatV2GaitTransitionEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
     """Continuation stage: turn the anti-fall seed into early forward gait gently."""
 
@@ -636,6 +657,25 @@ class KBotForwardFlatV2GaitTransitionEnvCfg(KBotForwardFlatV2ScratchV1BootstrapE
         self.rewards.low_body_l2.params["minimum_height"] = 0.50
         self.rewards.knee_extension_l1.weight = -40.0
         self.rewards.knee_extension_l1.params["min_bend"] = 0.45
+
+
+@configclass
+class KBotForwardFlatV23GaitTransitionEnvCfg(KBotForwardFlatV2GaitTransitionEnvCfg):
+    """V2.3 gait transition with hip-axis support-width targets."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -0.3
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.08
+        self.rewards.foot_lateral_lane_max_l1.weight = -0.1
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.06
 
 
 @configclass
@@ -748,6 +788,146 @@ class KBotForwardFlatV2HipContactCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEn
                 "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
             },
         )
+
+
+@configclass
+class KBotForwardFlatV2StepLengthCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEnvCfg):
+    """Fine-tune stage: lengthen tiny rapid steps while preserving straight, upright gait."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.5
+        self.rewards.track_ang_vel_z_exp.weight = 2.4
+        self.rewards.action_rate_l2.weight = -0.07
+        self.rewards.feet_air_time.weight = 1.1
+        self.rewards.feet_air_time.params["threshold"] = 0.18
+
+        self.rewards.root_lateral_position_l2.weight = -9.0
+        self.rewards.lateral_velocity_l2.weight = -7.5
+        self.rewards.yaw_rate_l2.weight = -5.0
+        self.rewards.world_heading_l2.weight = -12.0
+        self.rewards.root_lateral_tilt_l2.weight = -35.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -125.0
+
+        self.rewards.base_height_l2.weight = -24.0
+        self.rewards.base_height_l2.params["target_height"] = 0.80
+        self.rewards.low_body_l2.weight = -55.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.55
+
+        self.rewards.foot_sagittal_separation_l1.weight = -3.5
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.08
+        self.rewards.swing_foot_overtake_l1.weight = -5.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.06
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.20
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.04
+
+        self.rewards.foot_lateral_spacing_l1.weight = -3.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -5.5
+        self.rewards.foot_lateral_lane_l1.weight = -3.2
+        self.rewards.foot_lateral_lane_max_l1.weight = -1.2
+        self.rewards.foot_parallel_l2.weight = -0.8
+        self.rewards.foot_flat_l2.weight = -0.6
+        self.rewards.stance_foot_flat_l2.weight = -1.4
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -3.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -8.0
+
+
+@configclass
+class KBotForwardFlatV2CadenceLengthCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEnvCfg):
+    """Fine-tune stage: slow the rapid shuffle while keeping the last good straightness."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.observations.policy.gait_phase.params["period_s"] = 1.20
+        self.rewards.alternating_foot_phase.params["period_s"] = 1.20
+        self.rewards.alternating_foot_phase.weight = 0.15
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.8
+        self.rewards.track_lin_vel_xy_exp.params["std"] = math.sqrt(0.08)
+        self.rewards.track_ang_vel_z_exp.weight = 2.2
+        self.rewards.action_rate_l2.weight = -0.055
+        self.rewards.feet_air_time.weight = 1.35
+        self.rewards.feet_air_time.params["threshold"] = 0.30
+
+        self.rewards.root_lateral_position_l2.weight = -7.0
+        self.rewards.lateral_velocity_l2.weight = -6.5
+        self.rewards.yaw_rate_l2.weight = -4.2
+        self.rewards.world_heading_l2.weight = -9.0
+        self.rewards.root_lateral_tilt_l2.weight = -28.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -105.0
+
+        self.rewards.base_height_l2.weight = -20.0
+        self.rewards.base_height_l2.params["target_height"] = 0.79
+        self.rewards.low_body_l2.weight = -45.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.54
+
+        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.16
+        self.rewards.swing_foot_overtake_l1.weight = -3.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.12
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.30
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.06
+
+        self.rewards.foot_lateral_spacing_l1.weight = -2.5
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -5.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -2.8
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.weight = -1.0
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_parallel_l2.weight = -0.6
+        self.rewards.foot_flat_l2.weight = -0.4
+        self.rewards.stance_foot_flat_l2.weight = -1.0
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -2.5
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -6.0
+
+
+@configclass
+class KBotForwardFlatV2HipAxisWidthCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEnvCfg):
+    """Fine-tune stage: move support width to hip axes without spending hip roll."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.5
+        self.rewards.track_ang_vel_z_exp.weight = 2.4
+        self.rewards.action_rate_l2.weight = -0.06
+        self.rewards.feet_air_time.weight = 1.2
+
+        self.rewards.root_lateral_position_l2.weight = -12.0
+        self.rewards.lateral_velocity_l2.weight = -8.0
+        self.rewards.yaw_rate_l2.weight = -5.5
+        self.rewards.world_heading_l2.weight = -14.0
+        self.rewards.root_lateral_tilt_l2.weight = -45.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -180.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = -2.2
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -4.5
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -2.4
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.weight = -0.8
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+
+        self.rewards.foot_sagittal_separation_l1.weight = -1.2
+        self.rewards.swing_foot_overtake_l1.weight = -1.6
+        self.rewards.foot_parallel_l2.weight = -0.6
+        self.rewards.foot_flat_l2.weight = -0.5
+        self.rewards.stance_foot_flat_l2.weight = -1.2
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -5.5
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -18.0
+        self.rewards.hip_roll_yaw_position_ema_l2.params["tau_s"] = 2.5
 
 
 @configclass
