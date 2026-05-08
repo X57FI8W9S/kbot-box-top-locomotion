@@ -91,6 +91,17 @@ domain randomization: friction, base mass, base COM, reset pose, reset velocity,
 termination settings: time-out only in current V2 training; base_contact, bad_orientation, low_body, and locked_knees are disabled
 ```
 
+2026-05-08 pose-bootstrap asset finding:
+
+```text
+The handcrafted standing pose now has a headless Isaac Lab zero-action validation path.
+The pose stands only when the task does not override the KBot articulation root props.
+The removed override was ArticulationRootPropertiesCfg(enabled_self_collisions=True, solver_position_iteration_count=8, solver_velocity_iteration_count=2).
+Standalone probes showed the rigid-body props alone were not the issue; the articulation root props reproduced the fall.
+Pose-bootstrap uses the raw-USD settled joint pose, root z = 0.8565, settled base-height target = 0.856, and scaled implicit actuator gains.
+Validation: Isaac-KBot-Forward-Flat-V2-Scratch-PoseBootstrap-v0, default asset, zero action/no policy, 1000 env steps = 20 s sim time, min_z = 0.8559, final_z = 0.8565, max_abs_gravity_xy about 0.0739.
+```
+
 Current contact sensor status:
 
 ```text
@@ -1007,6 +1018,22 @@ training result: completed 300 continuation iterations. Final logged iteration 2
 diagnostic result: evaluator REVIEW_VIDEO. speed_tracking_ratio 0.944, speed_mean_mps 0.177 against command 0.187, yaw_drift_rad_per_m 0.008, lateral_drift_m_per_m -0.166, root_height_mean_m 0.726, step_length_mean_m 0.0299, cycle_length_mean_m 0.0553, double_support_fraction 0.551. Hip geometry improved but still fails: hip_roll_mean_abs_5cycle_rad 0.196 and hip_yaw_mean_abs_5cycle_rad 0.146.
 video: logs/rsl_rl/kbot_forward_flat/2026-05-08_04-08-49_v2_3_hip_axis_posture_cleanup_from_2297/videos/play/trailing-hud-model_2596-v2_3-hip-axis-posture-cleanup.mp4
 interpretation: this is better than model_2297 on hip roll/yaw and support timing, but it gave up support width in the HUD rollout: sep mean 0.209 m and final 5-cycle sep about 0.225 m, below the 0.3164 m target. It is not a keeper yet. The next continuation should keep hip posture pressure but restore stronger width/lane enforcement and start lengthening steps gradually.
+```
+
+## 10.4 V2.4 Settled-Pose Scratch Bootstrap Result
+
+```text
+date: 2026-05-08
+run: logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep
+checkpoint: model_1299.pt
+task id: Isaac-KBot-Forward-Flat-V2_4-Scratch-PoseBootstrap-v0
+start: true policy iteration zero, no checkpoint resume
+why it was tried: restart the next V2 lineage from the GUI-validated settled standing pose instead of asking the policy to recover from a fall or from the older knee-crossing bootstrap posture.
+training result: completed 1300 iterations from scratch. Final logged iteration 1299/1300 had mean reward about +38.05, mean episode length 200 steps, timeout fraction 1.0, termination penalty 0.0, velocity xy error about 0.0113, yaw error about 0.0119, action std about 0.03.
+playback: 30.0 s, 1500 frames at 50 FPS, no fall resets.
+video: logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep/videos/play/trailing-hud-model_1299-v2_4-pose-bootstrap-fsep-ksep.mp4
+metrics: final_hud_fsep_m 0.184, final_hud_ksep_m 0.288, root_height_mean_m 0.847, root_height_final_m 0.847, speed_mean_mps 0.002.
+interpretation: valid settled-pose anti-fall seed. This is not a walking checkpoint. It should feed the next gentle gait-transition branch, with `fsep` and `ksep` watched explicitly to catch foot or knee crossing before the policy reaches the old failure mode.
 ```
 
 ## 11. Open Questions

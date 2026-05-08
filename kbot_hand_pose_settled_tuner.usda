@@ -1,0 +1,169 @@
+#usda 1.0
+(
+    defaultPrim = "boxtop_sim"
+    metersPerUnit = 1
+    subLayers = [
+        @assets/robot/usd/kbot_box_top3.usd@
+    ]
+    upAxis = "Z"
+)
+
+def PhysicsScene "physicsScene"
+{
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 800
+    float inputs:angle = 0.4
+    double3 xformOp:rotateXYZ = (-45, 0, -35)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Camera "camera"
+{
+    double3 xformOp:translate = (2.2, -3.0, 1.3)
+    double3 xformOp:rotateXYZ = (68, 0, 36)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    float focalLength = 24
+}
+
+def Cube "ground" (
+    prepend apiSchemas = ["PhysicsCollisionAPI"]
+)
+{
+    double size = 1
+    double3 xformOp:translate = (0, 0, -0.025)
+    double3 xformOp:scale = (4, 4, 0.05)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    color3f[] primvars:displayColor = [(0.78, 0.78, 0.76)]
+}
+
+over "boxtop_sim"
+{
+    double3 xformOp:translate = (0, 0, 0.88)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    over "joints"
+    {
+        # Joint drive target and initial state positions are degrees in USD/PhysX revolute joints.
+        # Raw-USD settled pose sampled from kbot_hand_pose_tuner.usda after 3600 app updates:
+        # z=0.88 spawn, settled base z ~= 0.8574
+        # lhp=16.290068, lhr=0.099637, lhy=0.076313, lk=29.066372, la=-14.096342,
+        # rhp=-16.278603, rhr=0.109231, rhy=0.024950, rk=-28.988921, ra=14.164853.
+        # Drive gains mirror source/kbot_loco/.../assets.py DCMotorCfg groups:
+        # hip_pitch/knee: stiffness=45, damping=4, maxForce=120
+        # hip_roll: stiffness=35, damping=3, maxForce=60
+        # hip_yaw: stiffness=25, damping=2, maxForce=60
+        # ankles: stiffness=12, damping=1, maxForce=17
+        over "left_hip_pitch_04"
+        {
+            float drive:angular:physics:stiffness = 45
+            float drive:angular:physics:damping = 4
+            float drive:angular:physics:maxForce = 120
+            float drive:angular:physics:targetPosition = 16.290068
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = 16.290068
+            float state:angular:physics:velocity = 0
+        }
+
+        over "right_hip_pitch_04"
+        {
+            float drive:angular:physics:stiffness = 45
+            float drive:angular:physics:damping = 4
+            float drive:angular:physics:maxForce = 120
+            float drive:angular:physics:targetPosition = -16.278603
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = -16.278603
+            float state:angular:physics:velocity = 0
+        }
+
+        over "left_hip_roll_03"
+        {
+            float drive:angular:physics:stiffness = 35
+            float drive:angular:physics:damping = 3
+            float drive:angular:physics:maxForce = 60
+            float drive:angular:physics:targetPosition = 0.099637
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = 0.099637
+            float state:angular:physics:velocity = 0
+        }
+
+        over "right_hip_roll_03"
+        {
+            float drive:angular:physics:stiffness = 35
+            float drive:angular:physics:damping = 3
+            float drive:angular:physics:maxForce = 60
+            float drive:angular:physics:targetPosition = 0.109231
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = 0.109231
+            float state:angular:physics:velocity = 0
+        }
+
+        over "left_hip_yaw_03"
+        {
+            float drive:angular:physics:stiffness = 25
+            float drive:angular:physics:damping = 2
+            float drive:angular:physics:maxForce = 60
+            float drive:angular:physics:targetPosition = 0.076313
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = 0.076313
+            float state:angular:physics:velocity = 0
+        }
+
+        over "right_hip_yaw_03"
+        {
+            float drive:angular:physics:stiffness = 25
+            float drive:angular:physics:damping = 2
+            float drive:angular:physics:maxForce = 60
+            float drive:angular:physics:targetPosition = 0.024950
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = 0.024950
+            float state:angular:physics:velocity = 0
+        }
+
+        over "left_knee_04"
+        {
+            float drive:angular:physics:stiffness = 45
+            float drive:angular:physics:damping = 4
+            float drive:angular:physics:maxForce = 120
+            float drive:angular:physics:targetPosition = 29.066372
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = 29.066372
+            float state:angular:physics:velocity = 0
+        }
+
+        over "right_knee_04"
+        {
+            float drive:angular:physics:stiffness = 45
+            float drive:angular:physics:damping = 4
+            float drive:angular:physics:maxForce = 120
+            float drive:angular:physics:targetPosition = -28.988921
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = -28.988921
+            float state:angular:physics:velocity = 0
+        }
+
+        over "left_ankle_02"
+        {
+            float drive:angular:physics:stiffness = 12
+            float drive:angular:physics:damping = 1
+            float drive:angular:physics:maxForce = 17
+            float drive:angular:physics:targetPosition = -14.096342
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = -14.096342
+            float state:angular:physics:velocity = 0
+        }
+
+        over "right_ankle_02"
+        {
+            float drive:angular:physics:stiffness = 12
+            float drive:angular:physics:damping = 1
+            float drive:angular:physics:maxForce = 17
+            float drive:angular:physics:targetPosition = 14.164853
+            float drive:angular:physics:targetVelocity = 0
+            float state:angular:physics:position = 14.164853
+            float state:angular:physics:velocity = 0
+        }
+    }
+}

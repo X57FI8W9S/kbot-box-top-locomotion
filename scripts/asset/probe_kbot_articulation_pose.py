@@ -73,6 +73,7 @@ parser.add_argument(
     help="Joint target pose. Defaults to --pose.",
 )
 parser.add_argument("--actuator", choices=("dc", "implicit"), default="dc")
+parser.add_argument("--gain-scale", type=float, default=1.0, help="Multiplier for actuator stiffness and damping.")
 parser.add_argument("--root-height", type=float, default=0.88)
 parser.add_argument("--root-x", type=float, default=0.0)
 parser.add_argument("--root-y", type=float, default=0.0)
@@ -90,6 +91,10 @@ parser.add_argument("--target-left-ankle", type=float, default=None, help="Overr
 parser.add_argument("--target-right-ankle", type=float, default=None, help="Override target right ankle position in radians.")
 parser.add_argument("--realtime", action="store_true", help="Throttle the loop to roughly realtime for GUI inspection.")
 parser.add_argument("--hold-open", action="store_true", help="Keep the Isaac window open after the probe finishes.")
+parser.add_argument("--task-spawn-props", action="store_true", help="Use the same rigid/articulation spawn properties as the locomotion task.")
+parser.add_argument("--enable-self-collisions", action="store_true", help="Enable articulation self-collisions.")
+parser.add_argument("--task-articulation-props", action="store_true", help="Use task solver iteration counts with self-collisions disabled.")
+parser.add_argument("--task-rigid-props", action="store_true", help="Use the locomotion task rigid body properties only.")
 parser.add_argument(
     "--preserve-root-orientation",
     action="store_true",
@@ -143,29 +148,29 @@ def _make_robot_cfg(usd_path: Path) -> ArticulationCfg:
                 joint_names_expr=[".*hip_pitch.*", ".*knee.*"],
                 effort_limit_sim=120.0,
                 velocity_limit_sim=6.283,
-                stiffness={".*": 45.0},
-                damping={".*": 4.0},
+                stiffness={".*": 45.0 * args.gain_scale},
+                damping={".*": 4.0 * args.gain_scale},
             ),
             "hip_roll": ImplicitActuatorCfg(
                 joint_names_expr=[".*hip_roll.*"],
                 effort_limit_sim=60.0,
                 velocity_limit_sim=6.283,
-                stiffness={".*": 35.0},
-                damping={".*": 3.0},
+                stiffness={".*": 35.0 * args.gain_scale},
+                damping={".*": 3.0 * args.gain_scale},
             ),
             "hip_yaw": ImplicitActuatorCfg(
                 joint_names_expr=[".*hip_yaw.*"],
                 effort_limit_sim=60.0,
                 velocity_limit_sim=6.283,
-                stiffness={".*": 25.0},
-                damping={".*": 2.0},
+                stiffness={".*": 25.0 * args.gain_scale},
+                damping={".*": 2.0 * args.gain_scale},
             ),
             "ankles": ImplicitActuatorCfg(
                 joint_names_expr=[".*ankle.*"],
                 effort_limit_sim=17.0,
                 velocity_limit_sim=12.566,
-                stiffness={".*": 12.0},
-                damping={".*": 1.0},
+                stiffness={".*": 12.0 * args.gain_scale},
+                damping={".*": 1.0 * args.gain_scale},
             ),
         }
     else:
@@ -175,39 +180,61 @@ def _make_robot_cfg(usd_path: Path) -> ArticulationCfg:
                 effort_limit=120.0,
                 saturation_effort=120.0,
                 velocity_limit=6.283,
-                stiffness={".*": 45.0},
-                damping={".*": 4.0},
+                stiffness={".*": 45.0 * args.gain_scale},
+                damping={".*": 4.0 * args.gain_scale},
             ),
             "hip_roll": DCMotorCfg(
                 joint_names_expr=[".*hip_roll.*"],
                 effort_limit=60.0,
                 saturation_effort=60.0,
                 velocity_limit=6.283,
-                stiffness={".*": 35.0},
-                damping={".*": 3.0},
+                stiffness={".*": 35.0 * args.gain_scale},
+                damping={".*": 3.0 * args.gain_scale},
             ),
             "hip_yaw": DCMotorCfg(
                 joint_names_expr=[".*hip_yaw.*"],
                 effort_limit=60.0,
                 saturation_effort=60.0,
                 velocity_limit=6.283,
-                stiffness={".*": 25.0},
-                damping={".*": 2.0},
+                stiffness={".*": 25.0 * args.gain_scale},
+                damping={".*": 2.0 * args.gain_scale},
             ),
             "ankles": DCMotorCfg(
                 joint_names_expr=[".*ankle.*"],
                 effort_limit=17.0,
                 saturation_effort=17.0,
                 velocity_limit=12.566,
-                stiffness={".*": 12.0},
-                damping={".*": 1.0},
+                stiffness={".*": 12.0 * args.gain_scale},
+                damping={".*": 1.0 * args.gain_scale},
             ),
         }
+    spawn_kwargs = {}
+    if args.task_spawn_props or args.task_rigid_props:
+        spawn_kwargs.update(
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=False,
+                retain_accelerations=False,
+                linear_damping=0.0,
+                angular_damping=0.0,
+                max_linear_velocity=1000.0,
+                max_angular_velocity=1000.0,
+                max_depenetration_velocity=1.0,
+            ),
+        )
+    if args.task_spawn_props or args.enable_self_collisions or args.task_articulation_props:
+        spawn_kwargs.update(
+            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                enabled_self_collisions=args.task_spawn_props or args.enable_self_collisions,
+                solver_position_iteration_count=8,
+                solver_velocity_iteration_count=2,
+            ),
+        )
     return ArticulationCfg(
         prim_path="/World/Robot",
         spawn=sim_utils.UsdFileCfg(
             usd_path=str(usd_path.resolve()),
             activate_contact_sensors=True,
+            **spawn_kwargs,
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, args.root_height),
@@ -299,7 +326,7 @@ def main() -> None:
     }
     print(
         f"ARTICULATION_STABILITY usd={usd_path} steps={args.steps} "
-        f"pose={args.pose} target_pose={args.target_pose or args.pose} actuator={args.actuator} "
+        f"pose={args.pose} target_pose={args.target_pose or args.pose} actuator={args.actuator} gain_scale={args.gain_scale} "
         f"root_pos=({args.root_x:.4f},{args.root_y:.4f},{args.root_height:.4f}) root_rpy_deg={args.root_rpy_deg} "
         f"hold_target={args.hold_target} preserve_root_orientation={args.preserve_root_orientation} "
         f"min_z={min(heights):.4f} final_z={heights[-1]:.4f} "

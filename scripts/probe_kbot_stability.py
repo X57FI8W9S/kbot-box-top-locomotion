@@ -37,6 +37,8 @@ parser.add_argument("--task-id", type=str, default=None, help="Gym task id to in
 parser.add_argument("--use-task-defaults", action="store_true", help="Keep the task config's default root height and joint pose.")
 parser.add_argument("--exact-reset", action="store_true", help="Disable reset pose, velocity, and joint-position noise.")
 parser.add_argument("--usd-path", type=Path, default=None, help="Override the robot USD spawned by the selected task config.")
+parser.add_argument("--decimation", type=int, default=None, help="Override task decimation for the probe.")
+parser.add_argument("--disable-physics-material-event", action="store_true", help="Disable startup physics material randomization.")
 parser.add_argument(
     "--action",
     type=float,
@@ -44,6 +46,12 @@ parser.add_argument(
     default=None,
     metavar=("L_HIP_P", "R_HIP_P", "L_HIP_R", "R_HIP_R", "L_HIP_Y", "R_HIP_Y", "L_KNEE", "R_KNEE", "L_ANKLE", "R_ANKLE"),
     help="Constant normalized joint-position action to apply for the whole probe.",
+)
+parser.add_argument("--debug-reset", action="store_true", help="Print reset/action/actuator buffers before and after the first step.")
+parser.add_argument(
+    "--prime-default-targets",
+    action="store_true",
+    help="Set robot joint position targets to default joint positions immediately after reset.",
 )
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -71,6 +79,10 @@ def main() -> None:
         cfg = parse_env_cfg(task_id, device=args.device, num_envs=1)
         config_name = type(cfg).__name__
     cfg.scene.num_envs = 1
+    if args.decimation is not None:
+        cfg.decimation = args.decimation
+    if args.disable_physics_material_event:
+        cfg.events.physics_material = None
     cfg.episode_length_s = max(cfg.episode_length_s, (args.steps + 10) * cfg.sim.dt * cfg.decimation)
     if args.usd_path is not None:
         cfg.scene.robot.spawn.usd_path = str(args.usd_path.resolve())
@@ -99,12 +111,54 @@ def main() -> None:
     if args.action is not None:
         action[:] = torch.tensor(args.action, device=unwrapped.device, dtype=action.dtype).reshape(1, -1)
     robot = unwrapped.scene["robot"]
+    if args.prime_default_targets:
+        robot.set_joint_position_target(robot.data.default_joint_pos.clone())
+        robot.write_data_to_sim()
+    if args.debug_reset:
+        print("DEBUG joint_names=", robot.joint_names, flush=True)
+        print("DEBUG default_joint_pos=", [round(float(v), 6) for v in robot.data.default_joint_pos[0].tolist()], flush=True)
+        print("DEBUG reset_joint_pos=", [round(float(v), 6) for v in robot.data.joint_pos[0].tolist()], flush=True)
+        print("DEBUG reset_joint_pos_target=", [round(float(v), 6) for v in robot.data.joint_pos_target[0].tolist()], flush=True)
+        print(
+            "DEBUG actuators=",
+            {
+                name: {
+                    "class": type(actuator).__name__,
+                    "joint_indices": list(actuator.joint_indices),
+                    "stiffness": [round(float(v), 6) for v in actuator.stiffness[0].tolist()],
+                    "damping": [round(float(v), 6) for v in actuator.damping[0].tolist()],
+                }
+                for name, actuator in robot.actuators.items()
+            },
+            flush=True,
+        )
+        for term_name, term in unwrapped.action_manager._terms.items():
+            print(
+                f"DEBUG action_term {term_name} class={type(term).__name__} "
+                f"joint_ids={getattr(term, '_joint_ids', None)} "
+                f"joint_names={getattr(term, '_joint_names', None)}",
+                flush=True,
+            )
+            for attr in ("_scale", "_offset", "_raw_actions", "_processed_actions"):
+                value = getattr(term, attr, None)
+                if value is not None:
+                    if isinstance(value, torch.Tensor):
+                        value = value.detach().cpu().tolist()
+                    print(f"DEBUG action_term {term_name} {attr}=", value, flush=True)
     heights = [float(robot.data.root_pos_w[0, 2].item())]
     rolls = [0.0]
     pitches = [0.0]
-    for _ in range(args.steps):
+    for step_index in range(args.steps):
         env.step(action)
         robot = unwrapped.scene["robot"]
+        if args.debug_reset and step_index == 0:
+            print("DEBUG after_step1_joint_pos=", [round(float(v), 6) for v in robot.data.joint_pos[0].tolist()], flush=True)
+            print("DEBUG after_step1_joint_pos_target=", [round(float(v), 6) for v in robot.data.joint_pos_target[0].tolist()], flush=True)
+            print("DEBUG after_step1_root_pos=", [round(float(v), 6) for v in robot.data.root_pos_w[0].tolist()], flush=True)
+            for term_name, term in unwrapped.action_manager._terms.items():
+                value = getattr(term, "_processed_actions", None)
+                if value is not None:
+                    print(f"DEBUG action_term {term_name} after_step1_processed=", value.detach().cpu().tolist(), flush=True)
         heights.append(float(robot.data.root_pos_w[0, 2].item()))
         gravity = robot.data.projected_gravity_b[0]
         rolls.append(float(gravity[1].item()))

@@ -3,13 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import DCMotorCfg
+from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 KBOT_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top3.usd"
 KBOT_PADS_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top3_pads.usd"
+ISAACLAB_IMPLICIT_GAIN_SCALE = 57.3
 
 HIP_PITCH_KNEE_ACTUATOR_CFG = DCMotorCfg(
     joint_names_expr=[".*hip_pitch.*", ".*knee.*"],
@@ -47,6 +48,38 @@ ANKLE_ACTUATOR_CFG = DCMotorCfg(
     damping={".*": 1.0},
 )
 
+IMPLICIT_HIP_PITCH_KNEE_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[".*hip_pitch.*", ".*knee.*"],
+    effort_limit_sim=120.0,
+    velocity_limit_sim=6.283,
+    stiffness={".*": 45.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+    damping={".*": 4.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+)
+
+IMPLICIT_HIP_ROLL_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[".*hip_roll.*"],
+    effort_limit_sim=60.0,
+    velocity_limit_sim=6.283,
+    stiffness={".*": 35.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+    damping={".*": 3.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+)
+
+IMPLICIT_HIP_YAW_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[".*hip_yaw.*"],
+    effort_limit_sim=60.0,
+    velocity_limit_sim=6.283,
+    stiffness={".*": 25.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+    damping={".*": 2.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+)
+
+IMPLICIT_ANKLE_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[".*ankle.*"],
+    effort_limit_sim=17.0,
+    velocity_limit_sim=12.566,
+    stiffness={".*": 12.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+    damping={".*": 1.0 * ISAACLAB_IMPLICIT_GAIN_SCALE},
+)
+
 
 def _spawn_cfg(usd_path: Path) -> sim_utils.UsdFileCfg:
     return sim_utils.UsdFileCfg(
@@ -60,11 +93,6 @@ def _spawn_cfg(usd_path: Path) -> sim_utils.UsdFileCfg:
             max_linear_velocity=1000.0,
             max_angular_velocity=1000.0,
             max_depenetration_velocity=1.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=True,
-            solver_position_iteration_count=8,
-            solver_velocity_iteration_count=2,
         ),
     )
 

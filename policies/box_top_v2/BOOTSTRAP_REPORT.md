@@ -470,10 +470,180 @@ Video with fixed gait table columns and corrected raw `sep` display:
 logs/rsl_rl/kbot_forward_flat/2026-05-07_02-53-20_v2_2_lateral_cleanup_policy_only_finetune_from_3195/videos/play/trailing-hud-model_3200-v2_2-finetune-hudfix-rawsep.mp4
 ```
 
-In this render, HUD `sep` is `abs(left_sole_y - right_sole_y)` in root/body coordinates, averaged over the same five-cycle HUD window used by most of the overlay. The final JSON reports `final_hud_sep_m = 0.255`.
+In this render, the old HUD `sep` value is now named `fsep`: `abs(left_sole_y - right_sole_y)` in root/body coordinates, averaged over the same five-cycle HUD window used by most of the overlay. The overlay also reports `ksep`, the same lateral separation formula applied to the left/right knee proxy bodies. The final JSON keeps `final_hud_sep_m` as a compatibility alias for `final_hud_fsep_m`.
 
 Interpretation:
 
 - `model_3200.pt` is slightly better than `model_3195.pt` on hip-roll mean and lateral drift, but worse on speed and still not a keeper.
 - Further PPO updates from this lineage tend to slow the policy or increase hip roll. Treat `model_3200.pt` as the current fine-tune candidate, but keep `model_3195.pt` as the safer baseline.
 - The next attempt should probably use a branch specifically aimed at step length/contact geometry rather than more generic continuation.
+
+## 2026-05-08 Handcrafted Pose / Headless Stability Result
+
+The handcrafted standing pose was retested after the actuator and USD setup changed. This became a pure simulation validation issue, not a policy issue.
+
+### Pose Under Test
+
+The GUI-authored pose that stood in Isaac Sim was:
+
+```text
+root z = 0.88
+left_hip_pitch_04   =  17.0 deg
+right_hip_pitch_04  = -17.0 deg
+left_hip_roll_03    =   0.0 deg
+right_hip_roll_03   =   0.0 deg
+left_hip_yaw_03     =   0.0 deg
+right_hip_yaw_03    =   0.0 deg
+left_knee_04        =  29.5 deg
+right_knee_04       = -29.5 deg
+left_ankle_02       = -12.0 deg
+right_ankle_02      =  12.0 deg
+```
+
+After raw USD playback settled, the measured Isaac Lab joint state used for the task reset was:
+
+```text
+root z target = 0.88
+settled root z during hold = about 0.856
+
+left_hip_pitch_04   =  0.284315 rad
+right_hip_pitch_04  = -0.284115 rad
+left_hip_roll_03    =  0.001739 rad
+right_hip_roll_03   =  0.001906 rad
+left_hip_yaw_03     =  0.001332 rad
+right_hip_yaw_03    =  0.000435 rad
+left_knee_04        =  0.507304 rad
+right_knee_04       = -0.505952 rad
+left_ankle_02       = -0.246028 rad
+right_ankle_02      =  0.247223 rad
+```
+
+### What Was Isolated
+
+Raw USD / GUI playback stood. The same pose initially fell inside the registered Isaac Lab task. The difference was isolated with standalone and manager-env probes.
+
+Findings:
+
+- The raw USD behavior was reproducible headless when sampling PhysX state through dynamic control.
+- The Isaac Lab standalone articulation probe required implicit actuator gains scaled by `57.3` to match the raw USD drive strength.
+- Setting `init_state.joint_pos` to the settled pose was necessary so the action offset and reset pose match.
+- The manager env's `joint_pos_target` buffer starts at zero immediately after reset, but priming it to the default pose did not by itself fix the fall.
+- The real remaining blocker was the KBot spawn articulation override in `assets.py`.
+
+The failing override was:
+
+```text
+articulation_props = ArticulationRootPropertiesCfg(
+    enabled_self_collisions=True,
+    solver_position_iteration_count=8,
+    solver_velocity_iteration_count=2,
+)
+```
+
+The fall was reproduced in the standalone articulation probe by adding those task articulation props. The rigid-body props alone did not reproduce the failure. Enabling self-collisions reproduced the fall, and the solver-iteration override with self-collisions disabled also reproduced the fall. The safest fix is to stop overriding articulation root props for this asset and let the USD/default articulation settings drive PhysX, matching GUI/raw USD behavior.
+
+### Code Changes
+
+The pose-bootstrap task now uses:
+
+- `init_state.pos = (0.0, 0.0, 0.8565)`
+- the settled joint pose above as `init_state.joint_pos`
+- scaled implicit actuator groups for the pose-bootstrap stage:
+  - hip pitch + knee: stiffness `45.0 * 57.3`, damping `4.0 * 57.3`
+  - hip roll: stiffness `35.0 * 57.3`, damping `3.0 * 57.3`
+  - hip yaw: stiffness `25.0 * 57.3`, damping `2.0 * 57.3`
+  - ankle: stiffness `12.0 * 57.3`, damping `1.0 * 57.3`
+- `base_height_l2.target_height = 0.856` for this settled-pose bootstrap task
+- no custom `ArticulationRootPropertiesCfg` override in the common KBot spawn cfg
+
+### Validation
+
+Standalone test, raw USD settled pose, implicit actuators, scaled gains:
+
+```bash
+.venv/bin/python scripts/asset/probe_kbot_articulation_pose.py \
+  --headless \
+  --usd-path /media/rnyx/Tapioka/TPs/kbot-rl-loco\(old\)/usd/kbot3_2.usd \
+  --pose raw-usd-settled \
+  --target-pose raw-usd-settled \
+  --root-height 0.8565 \
+  --steps 4000 \
+  --hold-target \
+  --actuator implicit \
+  --gain-scale 57.3
+```
+
+Result:
+
+```text
+steps = 4000 physics steps = 20 s sim time
+min_z = 0.8559
+final_z = 0.8565
+max_abs_gravity_xy = about 0.0736
+```
+
+Registered task probe, default task asset, no policy, zero action:
+
+```bash
+.venv/bin/python scripts/probe_kbot_stability.py \
+  --headless \
+  --task-id Isaac-KBot-Forward-Flat-V2-Scratch-PoseBootstrap-v0 \
+  --use-task-defaults \
+  --exact-reset \
+  --steps 1000 \
+  --prime-default-targets
+```
+
+Result:
+
+```text
+steps = 1000 env steps = 20 s sim time
+min_z = 0.8559
+final_z = 0.8565
+max_abs_gravity_xy = about 0.0739
+final_joint_pos ~= [0.2845, -0.2844, 0.0025, 0.0027, 0.0014, 0.0006, 0.5132, -0.5113, -0.2802, 0.2807]
+```
+
+Conclusion: the handcrafted pose is now a valid headless Isaac Lab starter pose for the pose-bootstrap stage. It is a stable zero-action/no-policy sim hold for at least 20 s. This does not prove it will produce gait, but it removes the previous bootstrap problem where the reset immediately collapsed or crossed knees before the policy could act.
+
+### V2.4 Scratch Bootstrap Training
+
+The next scratch policy was started from this settled pose:
+
+```bash
+.venv/bin/python scripts/rsl_rl/train.py \
+  --task Isaac-KBot-Forward-Flat-V2_4-Scratch-PoseBootstrap-v0 \
+  --headless \
+  --num_envs 1024 \
+  --max_iterations 1300 \
+  --run_name v2_4_pose_bootstrap_from_zero_settled_fsep_ksep
+```
+
+Result:
+
+```text
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep
+checkpoint = model_1299.pt
+start = true policy iteration zero, no checkpoint resume
+final iteration = 1299/1300
+mean reward ~= 38.05
+mean episode length = 200
+time_out = 1.0
+termination_penalty = 0.0
+```
+
+The 30 s playback for the final checkpoint wrote:
+
+```text
+video = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep/videos/play/trailing-hud-model_1299-v2_4-pose-bootstrap-fsep-ksep.mp4
+metrics = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep/videos/play/trailing-hud-model_1299-v2_4-pose-bootstrap-fsep-ksep.json
+frames = 1500
+fps = 50
+duration = 30.0 s
+fall_reset_count = 0
+final_hud_fsep_m = 0.184
+final_hud_ksep_m = 0.288
+root_height_mean_m = 0.847
+```
+
+The HUD now names foot separation as `fsep` and adds `ksep` for the left/right knee proxy body lateral separation in root/body coordinates. The JSON still includes `final_hud_sep_m` as an alias for `final_hud_fsep_m` so older comparison snippets do not break.

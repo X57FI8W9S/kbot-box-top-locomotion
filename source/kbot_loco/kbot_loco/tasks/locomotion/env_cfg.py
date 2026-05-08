@@ -12,7 +12,14 @@ from isaaclab.utils import configclass
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as base_mdp
 from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
 
-from .assets import KBOT_CFG, REPO_ROOT
+from .assets import (
+    IMPLICIT_ANKLE_ACTUATOR_CFG,
+    IMPLICIT_HIP_PITCH_KNEE_ACTUATOR_CFG,
+    IMPLICIT_HIP_ROLL_ACTUATOR_CFG,
+    IMPLICIT_HIP_YAW_ACTUATOR_CFG,
+    KBOT_CFG,
+    REPO_ROOT,
+)
 from . import mdp
 
 
@@ -937,7 +944,13 @@ class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchStandC
     def __post_init__(self) -> None:
         super().__post_init__()
         self.scene.num_envs = 1024
-        self.scene.robot.init_state.pos = (0.0, 0.0, 0.88)
+        self.scene.robot.actuators = {
+            "hip_pitch_knee": IMPLICIT_HIP_PITCH_KNEE_ACTUATOR_CFG,
+            "hip_roll": IMPLICIT_HIP_ROLL_ACTUATOR_CFG,
+            "hip_yaw": IMPLICIT_HIP_YAW_ACTUATOR_CFG,
+            "ankles": IMPLICIT_ANKLE_ACTUATOR_CFG,
+        }
+        self.scene.robot.init_state.pos = (0.0, 0.0, 0.8565)
         self.scene.robot.init_state.joint_pos.update(
             {
                 "left_hip_pitch_04": 0.2843153178691864,
@@ -990,7 +1003,7 @@ class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchStandC
         self.rewards.stance_foot_flat_l2.weight = 0.0
 
         self.rewards.base_height_l2.weight = -35.0
-        self.rewards.base_height_l2.params["target_height"] = 0.733
+        self.rewards.base_height_l2.params["target_height"] = 0.856
         self.rewards.low_body_l2.weight = -120.0
         self.rewards.low_body_l2.params["minimum_height"] = 0.55
         self.rewards.upright_alive.weight = 12.0
@@ -1012,6 +1025,13 @@ class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchStandC
 
         self.terminations.low_body = None
         self.terminations.bad_orientation = None
+
+
+@configclass
+class KBotForwardFlatV24ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchPoseBootstrapEnvCfg):
+    """V2.4 scratch seed from the settled hand-authored standing pose."""
+
+    pass
 
 
 @configclass

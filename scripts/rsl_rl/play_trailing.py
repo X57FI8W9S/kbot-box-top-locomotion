@@ -240,7 +240,8 @@ def _draw_hud(
     hip_rms: float,
     window_label: str,
     step_stats: dict[str, dict[str, float]],
-    sep_m: float,
+    fsep_m: float,
+    ksep_m: float,
 ) -> np.ndarray:
     frame = np.ascontiguousarray(frame)
     height, width = frame.shape[:2]
@@ -262,8 +263,9 @@ def _draw_hud(
     _put_fixed(frame, f"torR {_format_float(torso_rms, 6, 3)}", (x, 96), width=13, scale=0.38)
     _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (x + 118, 96), width=13, scale=0.38)
     _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (x + 238, 96), width=13, scale=0.38)
-    _put_fixed(frame, f"sep {_format_float(sep_m, 5, 2)}", (x + 358, 96), width=10, scale=0.38)
-    _put_fixed(frame, window_label, (x + 472, 96), width=11, scale=0.38, color=(190, 210, 235))
+    _put_fixed(frame, f"fsep {_format_float(fsep_m, 5, 2)}", (x + 358, 96), width=11, scale=0.38)
+    _put_fixed(frame, f"ksep {_format_float(ksep_m, 5, 2)}", (x + 480, 96), width=11, scale=0.38)
+    _put_fixed(frame, window_label, (x + 602, 96), width=11, scale=0.38, color=(190, 210, 235))
 
     gait_x = max(x + 842, panel_x1 - 252)
     gait_label_x = gait_x
@@ -548,7 +550,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     joint_pos_window: deque[np.ndarray] = deque()
     torso_tilt_window: deque[float] = deque()
     hip_roll_yaw_window: deque[np.ndarray] = deque()
-    sep_window: deque[float] = deque()
+    fsep_window: deque[float] = deque()
+    ksep_window: deque[float] = deque()
     forward_window: deque[torch.Tensor] = deque()
     left_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
     right_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
@@ -558,6 +561,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     hip_roll_yaw_ids = [i for i, name in enumerate(joint_names) if "hip_roll" in name or "hip_yaw" in name]
     body_names = list(robot.body_names)
     foot_body_ids = [body_names.index("foot1"), body_names.index("foot3")]
+    knee_proxy_body_ids = [body_names.index("leg2_shell"), body_names.index("leg2_shell_2")]
     sole_center_offsets = torch.tensor(
         [(0.03, -0.036528655, -0.0194786795), (0.03, -0.036528755, -0.0234786545)],
         dtype=robot.data.body_pos_w.dtype,
@@ -575,7 +579,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "torso_tilt_window_rms": [],
         "hip_roll_yaw_window_mean_abs": [],
         "hip_roll_yaw_window_rms": [],
-        "sep_m": [],
+        "fsep_m": [],
+        "ksep_m": [],
     }
 
     for frame_index in range(args_cli.video_length):
@@ -593,7 +598,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             joint_pos_window.clear()
             torso_tilt_window.clear()
             hip_roll_yaw_window.clear()
-            sep_window.clear()
+            fsep_window.clear()
+            ksep_window.clear()
             forward_window.clear()
             left_touchdown_frames.clear()
             right_touchdown_frames.clear()
@@ -654,8 +660,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         root_pos_w = robot.data.root_pos_w[0:1]
         root_quat_w = robot.data.root_quat_w[0:1].expand(2, -1)
         sole_pos_b = quat_apply_inverse(root_quat_w, sole_pos_w - root_pos_w)
+        knee_pos_w = robot.data.body_pos_w[0, knee_proxy_body_ids]
+        knee_pos_b = quat_apply_inverse(root_quat_w, knee_pos_w - root_pos_w)
         foot_sep_y = abs(float(sole_pos_b[0, 1].item() - sole_pos_b[1, 1].item()))
-        sep_window.append(foot_sep_y)
+        knee_sep_y = abs(float(knee_pos_b[0, 1].item() - knee_pos_b[1, 1].item()))
+        fsep_window.append(foot_sep_y)
+        ksep_window.append(knee_sep_y)
         for values in (
             speed_window,
             command_window,
@@ -664,7 +674,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             joint_pos_window,
             torso_tilt_window,
             hip_roll_yaw_window,
-            sep_window,
+            fsep_window,
+            ksep_window,
         ):
             _trim_deque(values, hud_window_steps)
         torso_tilt_window_array = np.asarray(tuple(torso_tilt_window), dtype=np.float32)
@@ -684,14 +695,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         rollout_metrics["torso_tilt_window_rms"].append(torso_tilt_window_rms)
         rollout_metrics["hip_roll_yaw_window_mean_abs"].append(hip_roll_yaw_window_mean_abs)
         rollout_metrics["hip_roll_yaw_window_rms"].append(hip_roll_yaw_window_rms)
-        rollout_metrics["sep_m"].append(foot_sep_y)
+        rollout_metrics["fsep_m"].append(foot_sep_y)
+        rollout_metrics["ksep_m"].append(knee_sep_y)
 
         hud_joint_pos = np.mean(np.stack(tuple(joint_pos_window), axis=0), axis=0)
         hud_speed = float(np.mean(speed_window))
         hud_command_speed = float(np.mean(command_window))
         hud_yaw_rate = float(np.mean(yaw_window))
         hud_root_height = root_height_window_mean
-        hud_sep_m = float(np.mean(sep_window))
+        hud_fsep_m = float(np.mean(fsep_window))
+        hud_ksep_m = float(np.mean(ksep_window))
         hud_step_stats = _recent_step_stats(touchdown_events, args_cli.camera_cycle_window, dt)
 
         _set_trailing_camera(
@@ -731,7 +744,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hip_roll_yaw_window_rms,
                 hud_window_label,
                 hud_step_stats,
-                hud_sep_m,
+                hud_fsep_m,
+                hud_ksep_m,
             )
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
@@ -759,7 +773,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "camera_window_s_fallback": args_cli.camera_window_s,
             "camera_cycle_window": args_cli.camera_cycle_window,
             "final_hud_window_label": hud_window_label,
-            "final_hud_sep_m": hud_sep_m,
+            "final_hud_fsep_m": hud_fsep_m,
+            "final_hud_ksep_m": hud_ksep_m,
+            "final_hud_sep_m": hud_fsep_m,
             "final_hud_step_stats": hud_step_stats,
             "fall_reset_height": args_cli.fall_reset_height,
             "fall_reset_count": fall_reset_count,
