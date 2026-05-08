@@ -932,24 +932,24 @@ class KBotForwardFlatV2HipAxisWidthCleanupEnvCfg(KBotForwardFlatV2LateralCleanup
 
 @configclass
 class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchStandConservativeEnvCfg):
-    """Scratch bootstrap from a hand-authored V1-derived standing pose."""
+    """Scratch bootstrap from a raw-USD settled hand-authored standing pose."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
         self.scene.num_envs = 1024
-        self.scene.robot.init_state.pos = (0.0, 0.0, 0.733)
+        self.scene.robot.init_state.pos = (0.0, 0.0, 0.88)
         self.scene.robot.init_state.joint_pos.update(
             {
-                "left_hip_pitch_04": 0.62,
-                "right_hip_pitch_04": 0.62,
-                "left_hip_roll_03": 0.02,
-                "right_hip_roll_03": -0.02,
-                "left_hip_yaw_03": 0.0,
-                "right_hip_yaw_03": 0.0,
-                "left_knee_04": 1.20,
-                "right_knee_04": -1.20,
-                "left_ankle_02": -0.65,
-                "right_ankle_02": 0.65,
+                "left_hip_pitch_04": 0.2843153178691864,
+                "right_hip_pitch_04": -0.2841152250766754,
+                "left_hip_roll_03": 0.0017389939166605473,
+                "right_hip_roll_03": 0.0019064429216086864,
+                "left_hip_yaw_03": 0.0013319215504452586,
+                "right_hip_yaw_03": 0.00043546810047701,
+                "left_knee_04": 0.5073038935661316,
+                "right_knee_04": -0.5059521198272705,
+                "left_ankle_02": -0.24602758884429932,
+                "right_ankle_02": 0.24722331762313843,
             }
         )
         self.actions.joint_pos.scale = 0.20

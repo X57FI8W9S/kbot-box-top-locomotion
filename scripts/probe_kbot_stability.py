@@ -33,6 +33,10 @@ parser.add_argument("--left-ankle", type=float, default=0.0)
 parser.add_argument("--right-ankle", type=float, default=0.0)
 parser.add_argument("--root-height", type=float, default=0.72)
 parser.add_argument("--v2", action="store_true", help="Use the V2 play config instead of the V1 play config.")
+parser.add_argument("--task-id", type=str, default=None, help="Gym task id to instantiate. Defaults to the V1/V2 play task.")
+parser.add_argument("--use-task-defaults", action="store_true", help="Keep the task config's default root height and joint pose.")
+parser.add_argument("--exact-reset", action="store_true", help="Disable reset pose, velocity, and joint-position noise.")
+parser.add_argument("--usd-path", type=Path, default=None, help="Override the robot USD spawned by the selected task config.")
 parser.add_argument(
     "--action",
     type=float,
@@ -52,27 +56,43 @@ import torch  # noqa: E402
 
 import isaaclab_tasks  # noqa: F401,E402
 import kbot_loco  # noqa: F401,E402
+from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 from kbot_loco.tasks.locomotion.env_cfg import KBotForwardFlatEnvCfg_PLAY, KBotForwardFlatV2EnvCfg_PLAY  # noqa: E402
 
 
 def main() -> None:
+    task_id = args.task_id
     cfg_cls = KBotForwardFlatV2EnvCfg_PLAY if args.v2 else KBotForwardFlatEnvCfg_PLAY
-    cfg = cfg_cls()
+    if task_id is None:
+        task_id = "Isaac-KBot-Forward-Flat-V2-Play-v0" if args.v2 else "Isaac-KBot-Forward-Flat-Play-v0"
+        cfg = cfg_cls()
+        config_name = cfg_cls.__name__
+    else:
+        cfg = parse_env_cfg(task_id, device=args.device, num_envs=1)
+        config_name = type(cfg).__name__
     cfg.scene.num_envs = 1
-    cfg.scene.robot.init_state.pos = (0.0, 0.0, args.root_height)
-    cfg.scene.robot.init_state.joint_pos["left_hip_pitch_04"] = args.left_hip_pitch
-    cfg.scene.robot.init_state.joint_pos["right_hip_pitch_04"] = args.right_hip_pitch
-    cfg.scene.robot.init_state.joint_pos["left_hip_roll_03"] = args.left_roll
-    cfg.scene.robot.init_state.joint_pos["right_hip_roll_03"] = args.right_roll
-    cfg.scene.robot.init_state.joint_pos["left_knee_04"] = args.left_knee
-    cfg.scene.robot.init_state.joint_pos["right_knee_04"] = args.right_knee
-    cfg.scene.robot.init_state.joint_pos["left_ankle_02"] = args.left_ankle
-    cfg.scene.robot.init_state.joint_pos["right_ankle_02"] = args.right_ankle
+    cfg.episode_length_s = max(cfg.episode_length_s, (args.steps + 10) * cfg.sim.dt * cfg.decimation)
+    if args.usd_path is not None:
+        cfg.scene.robot.spawn.usd_path = str(args.usd_path.resolve())
+    if not args.use_task_defaults:
+        cfg.scene.robot.init_state.pos = (0.0, 0.0, args.root_height)
+        cfg.scene.robot.init_state.joint_pos["left_hip_pitch_04"] = args.left_hip_pitch
+        cfg.scene.robot.init_state.joint_pos["right_hip_pitch_04"] = args.right_hip_pitch
+        cfg.scene.robot.init_state.joint_pos["left_hip_roll_03"] = args.left_roll
+        cfg.scene.robot.init_state.joint_pos["right_hip_roll_03"] = args.right_roll
+        cfg.scene.robot.init_state.joint_pos["left_knee_04"] = args.left_knee
+        cfg.scene.robot.init_state.joint_pos["right_knee_04"] = args.right_knee
+        cfg.scene.robot.init_state.joint_pos["left_ankle_02"] = args.left_ankle
+        cfg.scene.robot.init_state.joint_pos["right_ankle_02"] = args.right_ankle
+    if args.exact_reset:
+        cfg.events.reset_base.params["pose_range"] = {}
+        cfg.events.reset_base.params["velocity_range"] = {}
+        cfg.events.reset_robot_joints.params["position_range"] = (1.0, 1.0)
     cfg.terminations.low_body = None
     cfg.terminations.base_contact = None
     cfg.terminations.locked_knees = None
 
-    env = gym.make("Isaac-KBot-Forward-Flat-Play-v0", cfg=cfg)
+    env = gym.make(task_id, cfg=cfg)
     env.reset()
     unwrapped = env.unwrapped
     action = torch.zeros((1, unwrapped.action_manager.total_action_dim), device=unwrapped.device)
@@ -92,7 +112,8 @@ def main() -> None:
 
     robot = unwrapped.scene["robot"]
     print(
-        f"STABILITY config={cfg_cls.__name__} steps={args.steps} root_height={args.root_height:.3f} "
+        f"STABILITY task_id={task_id} config={config_name} steps={args.steps} "
+        f"default_pose={args.use_task_defaults} root_height={cfg.scene.robot.init_state.pos[2]:.3f} "
         f"left_hip_pitch={args.left_hip_pitch:.3f} right_hip_pitch={args.right_hip_pitch:.3f} "
         f"left_knee={args.left_knee:.3f} right_knee={args.right_knee:.3f} "
         f"left_ankle={args.left_ankle:.3f} right_ankle={args.right_ankle:.3f} "
