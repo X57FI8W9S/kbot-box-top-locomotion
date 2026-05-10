@@ -1035,6 +1035,160 @@ class KBotForwardFlatV24ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchPoseB
 
 
 @configclass
+class KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg(KBotForwardFlatV2ScratchPoseBootstrapEnvCfg):
+    """V2.5 posed-start bootstrap that improves support width and starts stepping."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.commands.base_velocity.ranges.lin_vel_x = (0.06, 0.14)
+        self.commands.base_velocity.resampling_time_range = (4.0, 4.0)
+
+        self.rewards.alive.weight = 1.0
+        self.rewards.upright_alive.weight = 8.0
+        self.rewards.upright_alive.params["minimum_height"] = 0.76
+        self.rewards.upright_alive.params["max_tilt"] = 0.45
+        self.rewards.track_lin_vel_xy_exp.weight = 4.0
+        self.rewards.track_lin_vel_xy_exp.params["std"] = math.sqrt(0.01)
+        self.rewards.track_ang_vel_z_exp.weight = 1.0
+        self.rewards.forward_velocity_below_l2.weight = -8.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.06
+        self.rewards.world_forward_velocity_below_l2 = RewTerm(
+            func=mdp.world_forward_velocity_below_l2,
+            weight=-30.0,
+            params={"minimum_velocity": 0.04},
+        )
+        self.rewards.world_forward_velocity_clip = RewTerm(
+            func=mdp.world_forward_velocity_clip,
+            weight=3.0,
+            params={"max_velocity": 0.10},
+        )
+        self.rewards.feet_air_time.weight = 0.5
+        self.rewards.feet_air_time.params["threshold"] = 0.18
+        self.rewards.alternating_foot_phase.weight = 0.12
+        self.rewards.foot_sagittal_separation_l1.weight = -1.2
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.08
+        self.rewards.swing_foot_overtake_l1.weight = -1.6
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.06
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.16
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.04
+        self.rewards.lateral_velocity_l2.weight = -18.0
+        self.rewards.yaw_rate_l2.weight = -18.0
+        self.rewards.world_heading_l2.weight = -80.0
+        self.rewards.foot_flat_l2.weight = -3.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.76
+
+        self.rewards.foot_lateral_spacing_l1.weight = -10.0
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.28
+        self.rewards.foot_lateral_lane_l1.weight = -4.0
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.08
+        self.rewards.foot_lateral_lane_max_l1.weight = -2.0
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.06
+
+        self.rewards.foot_sole_lateral_lane_max_l1.weight = -48.0
+        self.rewards.foot_sole_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_sole_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_sole_lateral_lane_max_l1.params["tolerance"] = 0.008
+
+        self.rewards.centered_joint_target_position_l2.weight = 0.0
+        self.rewards.stand_joint_position_l2.weight = -0.75
+        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.76})
+        self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.75})
+
+
+@configclass
+class KBotForwardFlatV25PoseGaitQualityEnvCfg(KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg):
+    """Continuation from V2.5 posed-start seed: improve swing quality without losing width."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.commands.base_velocity.ranges.lin_vel_x = (0.08, 0.16)
+
+        self.rewards.world_forward_velocity_clip.weight = 2.5
+        self.rewards.world_forward_velocity_clip.params["max_velocity"] = 0.12
+        self.rewards.action_rate_l2.weight = -0.30
+        self.rewards.dof_acc_l2.weight = -5.0e-7
+        self.rewards.wobble_joint_vel_l2.weight = -0.12
+        self.rewards.forward_velocity_below_l2.weight = -6.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.07
+        self.rewards.world_forward_velocity_below_l2.weight = -24.0
+        self.rewards.world_forward_velocity_below_l2.params["minimum_velocity"] = 0.05
+
+        self.rewards.feet_air_time.weight = 1.0
+        self.rewards.feet_air_time.params["threshold"] = 0.22
+        self.rewards.alternating_foot_phase.weight = 0.18
+        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.10
+        self.rewards.swing_foot_overtake_l1.weight = -3.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.08
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.20
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.08
+        self.rewards.valid_step_root_advance = RewTerm(
+            func=mdp.valid_step_root_advance_reward,
+            weight=4.0,
+            params={
+                "command_name": "base_velocity",
+                "target_cycle_hz": 1.25,
+                "min_step_advance": 0.020,
+                "min_air_time": 0.12,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.supported_forward_velocity = RewTerm(
+            func=mdp.supported_forward_velocity_reward,
+            weight=1.5,
+            params={
+                "command_name": "base_velocity",
+                "min_single_support_fraction": 0.20,
+                "max_velocity": 0.12,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.walking_cycle_cadence_above_l2 = RewTerm(
+            func=mdp.walking_cycle_cadence_above_l2,
+            weight=-1.0,
+            params={
+                "max_cycle_hz": 1.25,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
+        self.rewards.contact_chatter_l1 = RewTerm(
+            func=mdp.contact_chatter_l1,
+            weight=-6.0,
+            params={
+                "min_air_time": 0.12,
+                "command_name": "base_velocity",
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
+
+        self.rewards.root_lateral_position_l2 = RewTerm(func=mdp.root_lateral_position_l2, weight=-12.0)
+        self.rewards.lateral_velocity_l2.weight = -20.0
+        self.rewards.yaw_rate_l2.weight = -20.0
+        self.rewards.world_heading_l2.weight = -90.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = -9.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.28
+        self.rewards.foot_sole_lateral_lane_max_l1.weight = -44.0
+
+        self.rewards.foot_world_parallel_max_l2.weight = -0.8
+        self.rewards.foot_flat_l2.weight = -4.0
+        self.rewards.stance_foot_flat_l2.weight = -1.2
+        self.rewards.action_rate_l2.weight = -0.30
+        self.rewards.stand_joint_position_l2.weight = -0.5
+
+
+@configclass
 class KBotForwardFlatV2ScratchActionBootstrapEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
     """Scratch bootstrap with a short V1-derived recovery-action prior."""
 

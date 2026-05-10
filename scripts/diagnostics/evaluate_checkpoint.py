@@ -42,9 +42,17 @@ parser.add_argument("--cycle_window", type=int, default=5)
 parser.add_argument("--hip_roll_mean_limit", type=float, default=0.03)
 parser.add_argument("--torso_roll_mean_limit", type=float, default=0.025)
 parser.add_argument("--yaw_drift_per_meter_limit", type=float, default=0.35)
-parser.add_argument("--lateral_drift_per_meter_limit", type=float, default=0.20)
+parser.add_argument("--lateral_drift_per_meter_limit", type=float, default=0.10)
 parser.add_argument("--min_timeout_fraction", type=float, default=1.0)
 parser.add_argument("--min_speed_tracking_ratio", type=float, default=0.80)
+parser.add_argument("--min_fsep_mean", type=float, default=0.28)
+parser.add_argument("--min_fsep_p05", type=float, default=0.24)
+parser.add_argument("--min_ksep_mean", type=float, default=0.26)
+parser.add_argument("--max_fsep_target_error_mean", type=float, default=0.06)
+parser.add_argument("--max_cycle_cadence_hz", type=float, default=2.50)
+parser.add_argument("--min_cmd_vx_for_step_gates", type=float, default=0.05)
+parser.add_argument("--min_step_root_advance_m", type=float, default=0.02)
+parser.add_argument("--min_cycle_root_advance_m", type=float, default=0.04)
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -66,7 +74,7 @@ import kbot_loco  # noqa: F401,E402
 from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg, multi_agent_to_single_agent  # noqa: E402
 from isaaclab.sensors import ContactSensor  # noqa: E402
 from isaaclab.utils.assets import retrieve_file_path  # noqa: E402
-from isaaclab.utils.math import quat_apply  # noqa: E402
+from isaaclab.utils.math import quat_apply, quat_apply_inverse  # noqa: E402
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper  # noqa: E402
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
 
@@ -142,6 +150,11 @@ def _std(rows: list[dict], key: str) -> float:
     if not rows:
         return 0.0
     return float(np.std([row[key] for row in rows]))
+
+
+def _cadence_hz(rows: list[dict]) -> float:
+    duration = _mean(rows, "duration_s")
+    return 1.0 / duration if duration > 1.0e-6 else 0.0
 
 
 def _events(
@@ -387,6 +400,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     hip_roll_ids = _joint_ids(joint_names, "hip_roll")
     hip_yaw_ids = _joint_ids(joint_names, "hip_yaw")
     knee_ids = _joint_ids(joint_names, "knee")
+    body_names = list(robot.body_names)
+    foot_body_ids = [body_names.index("foot1"), body_names.index("foot3")]
+    knee_proxy_body_ids = [body_names.index("leg2_shell"), body_names.index("leg2_shell_2")]
+    sole_center_offsets = torch.tensor(
+        [(0.03, -0.036528655, -0.0194786795), (0.03, -0.036528755, -0.0234786545)],
+        dtype=robot.data.body_pos_w.dtype,
+        device=robot.data.body_pos_w.device,
+    )
 
     series: dict[str, list] = {
         "time": [],
@@ -406,6 +427,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "foot_up_z": [],
         "foot_forward_z": [],
         "foot_lateral_z": [],
+        "fsep": [],
+        "ksep": [],
         "stance_slip": [],
     }
 
@@ -425,7 +448,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         else:
             pad_contact = np.zeros(4, dtype=np.float32)
             contact = raw_contact
-        foot_body_ids = [robot.body_names.index("foot1"), robot.body_names.index("foot3")]
         foot_pos = robot.data.body_pos_w[0, foot_body_ids].detach().cpu().numpy()
         foot_quat = robot.data.body_quat_w[0, foot_body_ids]
         up_b = torch.zeros(2, 3, device=foot_quat.device)
@@ -437,6 +459,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         up_z = quat_apply(foot_quat, up_b)[:, 2].detach().cpu().numpy()
         forward_z = quat_apply(foot_quat, forward_b)[:, 2].detach().cpu().numpy()
         lateral_z = quat_apply(foot_quat, lateral_b)[:, 2].detach().cpu().numpy()
+        sole_pos_w = robot.data.body_pos_w[0, foot_body_ids] + quat_apply(foot_quat, sole_center_offsets)
+        root_pos_w = robot.data.root_pos_w[0:1]
+        root_quat_w = robot.data.root_quat_w[0:1].expand(2, -1)
+        sole_pos_b = quat_apply_inverse(root_quat_w, sole_pos_w - root_pos_w)
+        knee_pos_w = robot.data.body_pos_w[0, knee_proxy_body_ids]
+        knee_pos_b = quat_apply_inverse(root_quat_w, knee_pos_w - root_pos_w)
+        fsep = abs(float(sole_pos_b[0, 1].item() - sole_pos_b[1, 1].item()))
+        ksep = abs(float(knee_pos_b[0, 1].item() - knee_pos_b[1, 1].item()))
         foot_vel = robot.data.body_lin_vel_w[0, foot_body_ids, :2].detach().cpu().numpy()
         stance_slip = np.linalg.norm(foot_vel, axis=1) * contact
 
@@ -457,6 +487,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         series["foot_up_z"].append(up_z)
         series["foot_forward_z"].append(forward_z)
         series["foot_lateral_z"].append(lateral_z)
+        series["fsep"].append(fsep)
+        series["ksep"].append(ksep)
         series["stance_slip"].append(stance_slip)
 
         with torch.inference_mode():
@@ -507,7 +539,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     )
     _add_support_metrics(steps, contact, full_support, events, step_dt, "step_foot")
     _add_support_metrics(cycles, contact, full_support, events, step_dt, "cycle_foot")
-    distance = max(float(arrays["root_x"][-1] - arrays["root_x"][0]), 1.0e-6)
+    x_distance = float(arrays["root_x"][-1] - arrays["root_x"][0])
+    distance = max(x_distance, 1.0e-6)
     yaw_drift = float(np.trapz(arrays["yaw_rate"], arrays["time"]))
     lateral_drift = float(arrays["root_y"][-1] - arrays["root_y"][0])
     speed_ratio = float(np.mean(arrays["vx"]) / max(np.mean(arrays["cmd_vx"]), 1.0e-6))
@@ -526,9 +559,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     right_cycle_duration_last5 = _last_mean(right_cycles, "duration_s", 5)
     left_step_duration_last5 = _last_mean(left_steps, "duration_s", 5)
     right_step_duration_last5 = _last_mean(right_steps, "duration_s", 5)
+    left_cycle_cadence_hz = _cadence_hz(left_cycles)
+    right_cycle_cadence_hz = _cadence_hz(right_cycles)
+    cycle_cadences = [hz for hz in (left_cycle_cadence_hz, right_cycle_cadence_hz) if hz > 0.0]
+    cycle_cadence_hz = float(np.mean(cycle_cadences)) if cycle_cadences else 0.0
+    moving_command = float(np.mean(arrays["cmd_vx"])) > args_cli.min_cmd_vx_for_step_gates
     symmetry = _paired_joint_symmetry(joint_names, joint_window) if joint_window.size else {}
     scorecard = {
         "distance_m": distance,
+        "x_distance_m": x_distance,
+        "y_distance_m": lateral_drift,
         "speed_mean_mps": float(np.mean(arrays["vx"])),
         "command_speed_mean_mps": float(np.mean(arrays["cmd_vx"])),
         "speed_tracking_ratio": speed_ratio,
@@ -542,6 +582,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "knee_abs_mean_5cycle_rad": float(np.mean(knee_window)) if knee_window.size else 0.0,
         "root_height_mean_m": float(np.mean(arrays["root_z"])),
         "root_height_p05_m": float(np.percentile(arrays["root_z"], 5)),
+        "fsep_mean_m": float(np.mean(arrays["fsep"])),
+        "fsep_p05_m": float(np.percentile(arrays["fsep"], 5)),
+        "fsep_final_m": float(arrays["fsep"][-1]),
+        "fsep_target_error_mean_m": float(np.mean(np.abs(arrays["fsep"] - 0.3164))),
+        "ksep_mean_m": float(np.mean(arrays["ksep"])),
+        "ksep_p05_m": float(np.percentile(arrays["ksep"], 5)),
+        "ksep_final_m": float(arrays["ksep"][-1]),
         "double_support_fraction": float(np.mean(double_support)),
         "airborne_fraction": float(np.mean(airborne)),
         "full_support_fraction_left": float(np.mean(full_support[:, 0])),
@@ -606,7 +653,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "cycle_root_advance_mean_m": float(np.mean(cycle_advances)) if cycle_advances else 0.0,
         "cycle_duration_mean_s": float(np.mean(cycle_durations)) if cycle_durations else 0.0,
         "cycle_duration_std_s": _std(cycles, "duration_s"),
-        "cycle_cadence_hz": 1.0 / max(float(np.mean(cycle_durations)) if cycle_durations else 0.0, 1.0e-6),
+        "cycle_cadence_hz": cycle_cadence_hz,
+        "left_cycle_cadence_hz": left_cycle_cadence_hz,
+        "right_cycle_cadence_hz": right_cycle_cadence_hz,
+        "max_cycle_cadence_hz": max(left_cycle_cadence_hz, right_cycle_cadence_hz),
         "left_cycle_length_mean_m": _mean(left_cycles, "cycle_length_m"),
         "right_cycle_length_mean_m": _mean(right_cycles, "cycle_length_m"),
         "left_cycle_root_advance_mean_m": _mean(left_cycles, "root_advance_m"),
@@ -650,6 +700,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "alternating_steps": len(steps) >= 2 * args_cli.cycle_window,
         "airborne": scorecard["airborne_fraction"] <= 0.02,
         "root_height": scorecard["root_height_p05_m"] >= 0.50,
+        "fsep_mean": scorecard["fsep_mean_m"] >= args_cli.min_fsep_mean,
+        "fsep_p05": scorecard["fsep_p05_m"] >= args_cli.min_fsep_p05,
+        "fsep_target_error": scorecard["fsep_target_error_mean_m"] <= args_cli.max_fsep_target_error_mean,
+        "ksep_mean": scorecard["ksep_mean_m"] >= args_cli.min_ksep_mean,
+        "cycle_cadence": scorecard["max_cycle_cadence_hz"] <= args_cli.max_cycle_cadence_hz,
+        "step_root_advance": (not moving_command)
+        or scorecard["step_root_advance_mean_m"] >= args_cli.min_step_root_advance_m,
+        "cycle_root_advance": (not moving_command)
+        or scorecard["cycle_root_advance_mean_m"] >= args_cli.min_cycle_root_advance_m,
     }
     decision = "APPROVE" if all(gates.values()) else "REJECT"
     if not all(gates.values()) and gates["alternating_steps"] and gates["yaw_drift"] and gates["lateral_drift"]:
@@ -677,6 +736,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "yaw_rate": _summary(arrays["yaw_rate"].tolist()),
             "root_height": _summary(arrays["root_z"].tolist()),
             "root_roll_proxy": _summary(arrays["root_roll_proxy"].tolist()),
+            "fsep": _summary(arrays["fsep"].tolist()),
+            "ksep": _summary(arrays["ksep"].tolist()),
         },
         "scorecard": scorecard,
         "gates": gates,

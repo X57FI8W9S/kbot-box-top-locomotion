@@ -117,6 +117,154 @@ def forward_velocity_below_l2(
     return torch.square(torch.clamp(minimum_velocity - asset.data.root_lin_vel_b[:, 0], min=0.0))
 
 
+def world_forward_velocity_below_l2(
+    env: ManagerBasedRLEnv,
+    minimum_velocity: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize lack of actual world +X progress, not just body-frame shuffling."""
+    asset = env.scene[asset_cfg.name]
+    root_lin_vel_w = quat_apply(asset.data.root_quat_w, asset.data.root_lin_vel_b)
+    return torch.square(torch.clamp(minimum_velocity - root_lin_vel_w[:, 0], min=0.0))
+
+
+def world_forward_velocity_clip(
+    env: ManagerBasedRLEnv,
+    max_velocity: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward real world +X progress while clipping incentives above the starter command range."""
+    asset = env.scene[asset_cfg.name]
+    root_lin_vel_w = quat_apply(asset.data.root_quat_w, asset.data.root_lin_vel_b)
+    return torch.clamp(root_lin_vel_w[:, 0] / max(max_velocity, 1.0e-6), min=0.0, max=1.0)
+
+
+def walking_cycle_cadence_above_l2(
+    env: ManagerBasedRLEnv,
+    max_cycle_hz: float,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Penalize per-foot same-foot cadence above walking range."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    now = env.episode_length_buf.float() * env.step_dt
+
+    last_touchdown_name = "_kbot_last_cycle_touchdown_time"
+    cycle_hz_name = "_kbot_cycle_hz"
+    last_touchdown = getattr(env, last_touchdown_name, None)
+    cycle_hz = getattr(env, cycle_hz_name, None)
+    if last_touchdown is None or last_touchdown.shape != contact_time.shape or last_touchdown.device != contact_time.device:
+        last_touchdown = torch.full_like(contact_time, -1.0)
+    if cycle_hz is None or cycle_hz.shape != contact_time.shape or cycle_hz.device != contact_time.device:
+        cycle_hz = torch.zeros_like(contact_time)
+
+    reset = env.episode_length_buf <= 1
+    last_touchdown = torch.where(reset[:, None], torch.full_like(last_touchdown, -1.0), last_touchdown)
+    cycle_hz = torch.where(reset[:, None], torch.zeros_like(cycle_hz), cycle_hz)
+
+    duration = now[:, None] - last_touchdown
+    has_previous = last_touchdown >= 0.0
+    valid_cycle = first_contact & has_previous & (duration > env.step_dt)
+    measured_hz = torch.where(valid_cycle, 1.0 / torch.clamp(duration, min=env.step_dt), cycle_hz)
+    cycle_hz = torch.where(valid_cycle, measured_hz, cycle_hz)
+    last_touchdown = torch.where(first_contact, now[:, None].expand_as(last_touchdown), last_touchdown)
+
+    setattr(env, last_touchdown_name, last_touchdown)
+    setattr(env, cycle_hz_name, cycle_hz)
+    moving = torch.any(in_contact, dim=1)
+    return torch.sum(torch.square(torch.clamp(cycle_hz - max_cycle_hz, min=0.0)), dim=1) * moving.float()
+
+
+def contact_chatter_l1(
+    env: ManagerBasedRLEnv,
+    min_air_time: float,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Penalize touchdown events that did not spend enough time in swing."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    penalty = torch.sum(torch.clamp(min_air_time - last_air_time, min=0.0) * first_contact, dim=1)
+    moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
+    return penalty * moving.float()
+
+
+def valid_step_root_advance_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_cycle_hz: float,
+    min_step_advance: float,
+    min_air_time: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward alternating touchdowns only when the root actually advanced."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    command = env.command_manager.get_command(command_name)
+    cmd_vx = torch.clamp(command[:, 0], min=0.0)
+    target_advance = torch.clamp(cmd_vx / max(2.0 * target_cycle_hz, 1.0e-6), min=min_step_advance, max=0.12)
+    root_x = asset.data.root_pos_w[:, 0]
+
+    last_root_name = "_kbot_last_step_touchdown_root_x"
+    last_foot_name = "_kbot_last_step_touchdown_foot"
+    last_root = getattr(env, last_root_name, None)
+    last_foot = getattr(env, last_foot_name, None)
+    if last_root is None or last_root.shape != root_x.shape or last_root.device != root_x.device:
+        last_root = root_x.clone()
+    if last_foot is None or last_foot.shape != root_x.shape or last_foot.device != root_x.device:
+        last_foot = torch.full((env.num_envs,), -1, dtype=torch.long, device=root_x.device)
+
+    reset = env.episode_length_buf <= 1
+    last_root = torch.where(reset, root_x, last_root)
+    last_foot = torch.where(reset, torch.full_like(last_foot, -1), last_foot)
+
+    reward = torch.zeros_like(root_x)
+    for foot_i in range(first_contact.shape[1]):
+        touchdown = first_contact[:, foot_i]
+        alternating = last_foot >= 0
+        alternating &= last_foot != foot_i
+        enough_air = last_air_time[:, foot_i] >= min_air_time
+        advance = root_x - last_root
+        normalized = torch.clamp((advance - min_step_advance) / torch.clamp(target_advance - min_step_advance, min=1.0e-4), min=0.0, max=1.0)
+        reward = torch.where(touchdown & alternating & enough_air, torch.maximum(reward, normalized), reward)
+        last_root = torch.where(touchdown, root_x, last_root)
+        last_foot = torch.where(touchdown, torch.full_like(last_foot, foot_i), last_foot)
+
+    moving = torch.norm(command[:, :2], dim=1) > 0.05
+    setattr(env, last_root_name, last_root)
+    setattr(env, last_foot_name, last_foot)
+    return reward * moving.float()
+
+
+def supported_forward_velocity_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_single_support_fraction: float,
+    max_velocity: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward forward velocity when support is not constant double-stance or flight."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    single_support = torch.sum(in_contact.int(), dim=1) == 1
+    double_support = torch.sum(in_contact.int(), dim=1) == 2
+    airborne = torch.sum(in_contact.int(), dim=1) == 0
+    root_lin_vel_w = quat_apply(asset.data.root_quat_w, asset.data.root_lin_vel_b)
+    forward_reward = torch.clamp(root_lin_vel_w[:, 0] / max(max_velocity, 1.0e-6), min=0.0, max=1.0)
+    support_reward = single_support.float() + 0.25 * double_support.float() - airborne.float()
+    moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
+    return forward_reward * torch.clamp(support_reward, min=0.0) * moving.float()
+
+
 def root_height_below_l2(
     env: ManagerBasedRLEnv,
     minimum_height: float,

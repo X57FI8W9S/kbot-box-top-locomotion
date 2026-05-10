@@ -216,6 +216,26 @@ gym.register(
 )
 
 gym.register(
+    id="Isaac-KBot-Forward-Flat-V2_5-Scratch-PoseWidthBootstrap-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatConservativePPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV25PoseGaitQualityEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatFineTunePPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Isaac-KBot-Forward-Flat-V2-Scratch-ActionBootstrap-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,

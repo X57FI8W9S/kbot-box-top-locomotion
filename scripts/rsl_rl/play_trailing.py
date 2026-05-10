@@ -30,6 +30,9 @@ from isaaclab.app import AppLauncher  # noqa: E402
 import cli_args  # noqa: E402
 
 
+OUTPUT_WIDTH = 1280
+OUTPUT_HEIGHT = 720
+
 parser = argparse.ArgumentParser(description="Play an RSL-RL checkpoint with a trailing camera and speed HUD.")
 parser.add_argument("--video_length", type=int, default=1500, help="Length of the recorded video in steps.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
@@ -49,8 +52,8 @@ parser.add_argument(
     help="Use last full gait cycles or a fixed seconds window for camera direction smoothing.",
 )
 parser.add_argument("--hud_window_s", type=float, default=3.0, help="Fallback HUD rolling-average window in seconds until full gait cycles are available.")
-parser.add_argument("--width", type=int, default=1280, help="Output video width.")
-parser.add_argument("--height", type=int, default=720, help="Output video height.")
+parser.add_argument("--width", type=int, default=OUTPUT_WIDTH, help="Output video width. HUD layout is authored for 1280.")
+parser.add_argument("--height", type=int, default=OUTPUT_HEIGHT, help="Output video height. HUD layout is authored for 720.")
 parser.add_argument("--output", type=str, default=None, help="Output mp4 path.")
 parser.add_argument(
     "--side_output",
@@ -233,6 +236,8 @@ def _draw_hud(
     command_speed: float,
     yaw_rate: float,
     root_height: float,
+    x_distance: float,
+    y_distance: float,
     joint_names: list[str],
     joint_pos: np.ndarray,
     torso_mean: float,
@@ -240,8 +245,10 @@ def _draw_hud(
     hip_rms: float,
     window_label: str,
     step_stats: dict[str, dict[str, float]],
+    support_stats: dict[str, float],
     fsep_m: float,
     ksep_m: float,
+    joules_per_meter: float,
 ) -> np.ndarray:
     frame = np.ascontiguousarray(frame)
     height, width = frame.shape[:2]
@@ -260,18 +267,29 @@ def _draw_hud(
     _put_fixed(frame, f"cmd {_format_float(command_speed, 5, 2)}", (x, 74), width=10, scale=0.40)
     _put_fixed(frame, f"yaw {_format_float(yaw_rate, 6, 2)}", (x + 108, 74), width=11, scale=0.40)
     _put_fixed(frame, f"hgt {_format_float(root_height, 5, 2)}", (x + 238, 74), width=10, scale=0.40)
+    _put_fixed(frame, f"x {_format_float(x_distance, 6, 2)}", (x + 358, 74), width=9, scale=0.40)
+    _put_fixed(frame, f"y {_format_float(y_distance, 6, 2)}", (x + 462, 74), width=9, scale=0.40)
     _put_fixed(frame, f"torR {_format_float(torso_rms, 6, 3)}", (x, 96), width=13, scale=0.38)
     _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (x + 118, 96), width=13, scale=0.38)
     _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (x + 238, 96), width=13, scale=0.38)
     _put_fixed(frame, f"fsep {_format_float(fsep_m, 5, 2)}", (x + 358, 96), width=11, scale=0.38)
     _put_fixed(frame, f"ksep {_format_float(ksep_m, 5, 2)}", (x + 480, 96), width=11, scale=0.38)
-    _put_fixed(frame, window_label, (x + 602, 96), width=11, scale=0.38, color=(190, 210, 235))
+    _put_fixed(frame, window_label, (x + 552, 74), width=10, scale=0.36, color=(190, 210, 235))
+    _put_fixed(frame, f"J/m {_format_float(joules_per_meter, 6, 1)}", (x + 552, 96), width=11, scale=0.36)
 
-    gait_x = max(x + 842, panel_x1 - 252)
-    gait_label_x = gait_x
-    gait_t_x = gait_x + 62
-    gait_m_x = gait_x + 112
-    gait_hz_x = gait_x + 168
+    # Fixed 1280x720 HUD slots. Keep numbers fixed-width so signs and new digits do not
+    # move neighboring indicators; columns are placed by decimal-cell starts, not text length.
+    left_x = 700
+    left_val_x = 762
+    right_x = 820
+    right_val_x = 892
+    support_x = 930
+    support_l_x = 1010
+    support_r_x = 1050
+    gait_label_x = 1092
+    gait_t_x = 1134
+    gait_m_x = 1178
+    gait_hz_x = 1222
     cv2.putText(frame, "gait", (gait_label_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
     cv2.putText(frame, "t", (gait_t_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
     cv2.putText(frame, "m", (gait_m_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
@@ -280,35 +298,30 @@ def _draw_hud(
         row = step_stats[label]
         color = (230, 240, 255)
         cv2.putText(frame, label, (gait_label_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
-        cv2.putText(frame, f"{row['time_s']:0.2f}", (gait_t_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
-        cv2.putText(frame, f"{row['length_m']:0.2f}", (gait_m_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
-        cv2.putText(frame, f"{row['rate_hz']:0.2f}", (gait_hz_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
+        _put_fixed(frame, _format_float(row["time_s"], 4, 2), (gait_t_x, row_y), width=4, scale=0.34, color=color)
+        _put_fixed(frame, _format_float(row["length_m"], 4, 2), (gait_m_x, row_y), width=4, scale=0.34, color=color)
+        _put_fixed(frame, _format_float(row["rate_hz"], 5, 2), (gait_hz_x, row_y), width=5, scale=0.34, color=color)
 
-    left_x = x + 575
-    right_x = x + 708
+    cv2.putText(frame, "support%", (support_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (190, 210, 235), 1)
+    cv2.putText(frame, "L", (support_l_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (190, 210, 235), 1)
+    cv2.putText(frame, "R", (support_r_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (190, 210, 235), 1)
+    for label, key_l, key_r, row_y in (
+        ("st", "left_stance", "right_stance", 58),
+        ("sg", "left_single", "right_single", 74),
+        ("db/air", "double", "airborne", 90),
+    ):
+        cv2.putText(frame, label, (support_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+        _put_fixed(frame, f"{100.0 * support_stats[key_l]:3.0f}", (support_l_x - 10, row_y), width=3, scale=0.32)
+        _put_fixed(frame, f"{100.0 * support_stats[key_r]:3.0f}", (support_r_x - 10, row_y), width=3, scale=0.32)
     row_y = 42
     row_step = 15
     for left_i, right_i in _paired_joint_rows(joint_names):
         if left_i is not None:
-            cv2.putText(
-                frame,
-                f"{_short_joint_name(joint_names[left_i])} {joint_pos[left_i]: .2f}",
-                (left_x, row_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.38,
-                (230, 240, 255),
-                1,
-            )
+            cv2.putText(frame, _short_joint_name(joint_names[left_i]), (left_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (230, 240, 255), 1)
+            _put_fixed(frame, _format_float(float(joint_pos[left_i]), 5, 2), (left_val_x, row_y), width=5, scale=0.36)
         if right_i is not None:
-            cv2.putText(
-                frame,
-                f"{_short_joint_name(joint_names[right_i])} {joint_pos[right_i]: .2f}",
-                (right_x, row_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.38,
-                (230, 240, 255),
-                1,
-            )
+            cv2.putText(frame, _short_joint_name(joint_names[right_i]), (right_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (230, 240, 255), 1)
+            _put_fixed(frame, _format_float(float(joint_pos[right_i]), 5, 2), (right_val_x, row_y), width=5, scale=0.36)
         row_y += row_step
     return frame
 
@@ -526,13 +539,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if output_path is None:
         output_path = os.path.join(log_dir, "videos", "play", "trailing-hud.mp4")
     _ensure_parent_dir(output_path)
-    output_width = args_cli.width if args_cli.width % 2 == 0 else args_cli.width - 1
+    output_width = OUTPUT_WIDTH
+    output_height = OUTPUT_HEIGHT
     view_width = output_width // 2
     writer = cv2.VideoWriter(
         output_path,
         cv2.VideoWriter_fourcc(*"mp4v"),
         int(1.0 / env.unwrapped.step_dt),
-        (output_width, args_cli.height),
+        (output_width, output_height),
     )
 
     obs = env.get_observations()
@@ -540,6 +554,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     contact_sensor: ContactSensor = env.unwrapped.scene.sensors["contact_forces"]
     contact_body_ids = _contact_body_ids(contact_sensor, ("foot1", "foot3"))
     command_manager = getattr(env.unwrapped, "command_manager", None)
+    root_start_xy = robot.data.root_pos_w[0, :2].detach().clone()
     dt = env.unwrapped.step_dt
     fallback_hud_window_steps = max(1, int(round(args_cli.hud_window_s / dt)))
     fallback_camera_window_steps = max(1, int(round(args_cli.camera_window_s / dt)))
@@ -552,6 +567,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     hip_roll_yaw_window: deque[np.ndarray] = deque()
     fsep_window: deque[float] = deque()
     ksep_window: deque[float] = deque()
+    left_contact_window: deque[bool] = deque()
+    right_contact_window: deque[bool] = deque()
+    positive_work_window: deque[float] = deque()
+    root_x_window: deque[float] = deque()
     forward_window: deque[torch.Tensor] = deque()
     left_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
     right_touchdown_frames: deque[int] = deque(maxlen=max(args_cli.camera_cycle_window + 1, 2))
@@ -581,6 +600,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "hip_roll_yaw_window_rms": [],
         "fsep_m": [],
         "ksep_m": [],
+        "x_distance_m": [],
+        "y_distance_m": [],
+        "positive_joint_work_j": [],
+        "hud_joules_per_meter": [],
     }
 
     for frame_index in range(args_cli.video_length):
@@ -600,9 +623,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             hip_roll_yaw_window.clear()
             fsep_window.clear()
             ksep_window.clear()
+            left_contact_window.clear()
+            right_contact_window.clear()
+            positive_work_window.clear()
+            root_x_window.clear()
             forward_window.clear()
             left_touchdown_frames.clear()
             right_touchdown_frames.clear()
+            root_start_xy = robot.data.root_pos_w[0, :2].detach().clone()
 
         foot_contact = contact_sensor.data.current_contact_time[0, contact_body_ids] > 0.0
         touchdown = foot_contact & ~previous_contact
@@ -613,6 +641,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             right_touchdown_frames.append(frame_index)
             touchdown_events.append((frame_index, "R", float(robot.data.root_pos_w[0, 0].item())))
         previous_contact = foot_contact.detach().clone()
+        left_contact_window.append(bool(foot_contact[0].item()))
+        right_contact_window.append(bool(foot_contact[1].item()))
 
         camera_window_steps = (
             _camera_cycle_window_steps(
@@ -636,6 +666,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         speed = float(robot.data.root_lin_vel_b[0, 0].item())
         yaw_rate = float(robot.data.root_ang_vel_b[0, 2].item())
         root_height = float(robot.data.root_pos_w[0, 2].item())
+        root_x = float(robot.data.root_pos_w[0, 0].item())
+        root_delta_xy = robot.data.root_pos_w[0, :2] - root_start_xy
+        x_distance = float(root_delta_xy[0].item())
+        y_distance = float(root_delta_xy[1].item())
         command_speed = 0.0
         if command_manager is not None:
             try:
@@ -647,8 +681,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         yaw_window.append(yaw_rate)
         root_height_window.append(root_height)
         joint_pos = robot.data.joint_pos[0].detach().cpu().numpy()
+        joint_vel = robot.data.joint_vel[0]
+        joint_torque = getattr(robot.data, "applied_torque", None)
+        if joint_torque is None:
+            joint_torque = getattr(robot.data, "computed_torque", None)
+        if joint_torque is None:
+            positive_work_step = 0.0
+        else:
+            joint_power = joint_torque[0] * joint_vel
+            positive_work_step = float(torch.sum(torch.clamp(joint_power, min=0.0)).item() * dt)
         torso_tilt = float(robot.data.projected_gravity_b[0, 1].item())
         joint_pos_window.append(joint_pos)
+        positive_work_window.append(positive_work_step)
+        root_x_window.append(root_x)
         torso_tilt_window.append(torso_tilt)
         if hip_roll_yaw_ids:
             hip_roll_yaw_window.append(joint_pos[hip_roll_yaw_ids])
@@ -676,6 +721,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             hip_roll_yaw_window,
             fsep_window,
             ksep_window,
+            left_contact_window,
+            right_contact_window,
+            positive_work_window,
+            root_x_window,
         ):
             _trim_deque(values, hud_window_steps)
         torso_tilt_window_array = np.asarray(tuple(torso_tilt_window), dtype=np.float32)
@@ -697,6 +746,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         rollout_metrics["hip_roll_yaw_window_rms"].append(hip_roll_yaw_window_rms)
         rollout_metrics["fsep_m"].append(foot_sep_y)
         rollout_metrics["ksep_m"].append(knee_sep_y)
+        rollout_metrics["x_distance_m"].append(x_distance)
+        rollout_metrics["y_distance_m"].append(y_distance)
+        rollout_metrics["positive_joint_work_j"].append(positive_work_step)
 
         hud_joint_pos = np.mean(np.stack(tuple(joint_pos_window), axis=0), axis=0)
         hud_speed = float(np.mean(speed_window))
@@ -706,6 +758,38 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         hud_fsep_m = float(np.mean(fsep_window))
         hud_ksep_m = float(np.mean(ksep_window))
         hud_step_stats = _recent_step_stats(touchdown_events, args_cli.camera_cycle_window, dt)
+        root_x_array = np.asarray(tuple(root_x_window), dtype=np.float32)
+        if root_x_array.size >= 2:
+            hud_window_distance = max(float(root_x_array[-1] - root_x_array[0]), 1.0e-3)
+        else:
+            hud_window_distance = 1.0e-3
+        hud_positive_work_j = float(np.sum(tuple(positive_work_window))) if positive_work_window else 0.0
+        hud_joules_per_meter = hud_positive_work_j / hud_window_distance
+        rollout_metrics["hud_joules_per_meter"].append(hud_joules_per_meter)
+        left_contact_array = np.asarray(tuple(left_contact_window), dtype=bool)
+        right_contact_array = np.asarray(tuple(right_contact_window), dtype=bool)
+        if left_contact_array.size:
+            left_single = left_contact_array & ~right_contact_array
+            right_single = right_contact_array & ~left_contact_array
+            double_support = left_contact_array & right_contact_array
+            airborne = ~left_contact_array & ~right_contact_array
+            hud_support_stats = {
+                "left_stance": float(np.mean(left_contact_array)),
+                "right_stance": float(np.mean(right_contact_array)),
+                "left_single": float(np.mean(left_single)),
+                "right_single": float(np.mean(right_single)),
+                "double": float(np.mean(double_support)),
+                "airborne": float(np.mean(airborne)),
+            }
+        else:
+            hud_support_stats = {
+                "left_stance": 0.0,
+                "right_stance": 0.0,
+                "left_single": 0.0,
+                "right_single": 0.0,
+                "double": 0.0,
+                "airborne": 0.0,
+            }
 
         _set_trailing_camera(
             env.unwrapped,
@@ -716,7 +800,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             args_cli.target_distance,
             args_cli.target_height,
         )
-        trailing_frame = _render_view_frame(env, view_width, args_cli.height)
+        trailing_frame = _render_view_frame(env, view_width, output_height)
 
         _set_side_camera(
             env.unwrapped,
@@ -727,7 +811,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             args_cli.target_distance,
             args_cli.target_height,
         )
-        side_frame = _render_view_frame(env, view_width, args_cli.height)
+        side_frame = _render_view_frame(env, view_width, output_height)
 
         if trailing_frame is not None and side_frame is not None:
             frame = np.concatenate((trailing_frame, side_frame), axis=1)
@@ -737,6 +821,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hud_command_speed,
                 hud_yaw_rate,
                 hud_root_height,
+                x_distance,
+                y_distance,
                 joint_names,
                 hud_joint_pos,
                 torso_tilt_window_mean,
@@ -744,8 +830,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hip_roll_yaw_window_rms,
                 hud_window_label,
                 hud_step_stats,
+                hud_support_stats,
                 hud_fsep_m,
                 hud_ksep_m,
+                hud_joules_per_meter,
             )
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
@@ -765,6 +853,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "checkpoint": resume_path,
             "video": output_path,
             "video_layout": "16:9 trailing_left_8:9_side_right_8:9_single_hud",
+            "output_width": output_width,
+            "output_height": output_height,
             "video_length_steps": args_cli.video_length,
             "dt": dt,
             "window_s": args_cli.hud_window_s,
@@ -776,6 +866,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "final_hud_fsep_m": hud_fsep_m,
             "final_hud_ksep_m": hud_ksep_m,
             "final_hud_sep_m": hud_fsep_m,
+            "final_x_distance_m": x_distance,
+            "final_y_distance_m": y_distance,
+            "final_hud_positive_joint_work_j": hud_positive_work_j,
+            "final_hud_joules_per_meter": hud_joules_per_meter,
             "final_hud_step_stats": hud_step_stats,
             "fall_reset_height": args_cli.fall_reset_height,
             "fall_reset_count": fall_reset_count,
