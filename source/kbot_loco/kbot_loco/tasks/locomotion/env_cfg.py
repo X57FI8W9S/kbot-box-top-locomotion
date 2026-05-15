@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-
+import os
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -1142,6 +1142,32 @@ class KBotForwardFlatV25PoseGaitQualityEnvCfg(KBotForwardFlatV25ScratchPoseWidth
                 "asset_cfg": SceneEntityCfg("robot"),
             },
         )
+        self.rewards.step_advance_margin = RewTerm(
+            func=mdp.step_advance_margin_reward,
+            weight=float(os.environ.get("KBOT_STEP_MARGIN_WEIGHT", "8.0")),
+            params={
+                "command_name": "base_velocity",
+                "target_cycle_hz": 1.25,
+                "min_step_advance": 0.008,
+                "max_step_advance": 0.12,
+                "short_step_penalty_scale": 1.5,
+                "min_step_duration": 0.07,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.dense_single_support_step_progress = RewTerm(
+            func=mdp.dense_single_support_step_progress_reward,
+            weight=float(os.environ.get("KBOT_DENSE_STEP_PROGRESS_WEIGHT", "6.0")),
+            params={
+                "command_name": "base_velocity",
+                "target_cycle_hz": 1.25,
+                "max_step_advance": 0.12,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        # Future swing-clearance margin target: 0.005 m. No z reward is active in this stage.
         self.rewards.supported_forward_velocity = RewTerm(
             func=mdp.supported_forward_velocity_reward,
             weight=1.5,

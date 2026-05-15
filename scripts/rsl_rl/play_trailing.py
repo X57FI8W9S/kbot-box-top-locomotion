@@ -32,6 +32,8 @@ import cli_args  # noqa: E402
 
 OUTPUT_WIDTH = 1280
 OUTPUT_HEIGHT = 720
+BOOTSTRAP_APPROVED_STEP_ADVANCE_M = 0.008
+BOOTSTRAP_APPROVED_STEP_DURATION_S = 0.07
 
 parser = argparse.ArgumentParser(description="Play an RSL-RL checkpoint with a trailing camera and speed HUD.")
 parser.add_argument("--video_length", type=int, default=1500, help="Length of the recorded video in steps.")
@@ -249,6 +251,7 @@ def _draw_hud(
     fsep_m: float,
     ksep_m: float,
     joules_per_meter: float,
+    approved_step_fraction: float,
 ) -> np.ndarray:
     frame = np.ascontiguousarray(frame)
     height, width = frame.shape[:2]
@@ -264,32 +267,39 @@ def _draw_hud(
     top_y = 50
     cv2.putText(frame, "speed", (x, top_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (210, 230, 255), 1)
     cv2.putText(frame, f"{speed:5.2f} m/s", (x + 72, top_y), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2)
-    _put_fixed(frame, f"cmd {_format_float(command_speed, 5, 2)}", (x, 74), width=10, scale=0.40)
-    _put_fixed(frame, f"yaw {_format_float(yaw_rate, 6, 2)}", (x + 108, 74), width=11, scale=0.40)
-    _put_fixed(frame, f"hgt {_format_float(root_height, 5, 2)}", (x + 238, 74), width=10, scale=0.40)
-    _put_fixed(frame, f"x {_format_float(x_distance, 6, 2)}", (x + 358, 74), width=9, scale=0.40)
-    _put_fixed(frame, f"y {_format_float(y_distance, 6, 2)}", (x + 462, 74), width=9, scale=0.40)
-    _put_fixed(frame, f"torR {_format_float(torso_rms, 6, 3)}", (x, 96), width=13, scale=0.38)
-    _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (x + 118, 96), width=13, scale=0.38)
-    _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (x + 238, 96), width=13, scale=0.38)
-    _put_fixed(frame, f"fsep {_format_float(fsep_m, 5, 2)}", (x + 358, 96), width=11, scale=0.38)
-    _put_fixed(frame, f"ksep {_format_float(ksep_m, 5, 2)}", (x + 480, 96), width=11, scale=0.38)
-    _put_fixed(frame, window_label, (x + 552, 74), width=10, scale=0.36, color=(190, 210, 235))
-    _put_fixed(frame, f"J/m {_format_float(joules_per_meter, 6, 1)}", (x + 552, 96), width=11, scale=0.36)
+    col0 = x
+    col1 = x + 114
+    col2 = x + 238
+    col3 = x + 354
+    col4 = x + 469
+    col5 = x + 574
+    _put_fixed(frame, f"hgt {_format_float(root_height, 5, 2)}", (col2, top_y), width=10, scale=0.36)
+    _put_fixed(frame, f"x {_format_float(x_distance, 6, 2)}", (col3, top_y), width=9, scale=0.36)
+    _put_fixed(frame, f"y {_format_float(y_distance, 6, 2)}", (col4, top_y), width=9, scale=0.36)
+    _put_fixed(frame, f"apv {_format_float(100.0 * approved_step_fraction, 5, 1)}%", (col5, top_y), width=10, scale=0.34)
+    _put_fixed(frame, f"cmd {_format_float(command_speed, 5, 2)}", (col0, 74), width=10, scale=0.40)
+    _put_fixed(frame, f"yaw {_format_float(yaw_rate, 6, 2)}", (col1, 74), width=11, scale=0.40)
+    _put_fixed(frame, window_label, (col5, 74), width=10, scale=0.36, color=(190, 210, 235))
+    _put_fixed(frame, f"torR {_format_float(torso_rms, 6, 3)}", (col0, 96), width=13, scale=0.36)
+    _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (col1, 96), width=13, scale=0.36)
+    _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (col2, 96), width=13, scale=0.36)
+    _put_fixed(frame, f"fsep {_format_float(fsep_m, 5, 2)}", (col3, 96), width=11, scale=0.36)
+    _put_fixed(frame, f"ksep {_format_float(ksep_m, 5, 2)}", (col4, 96), width=11, scale=0.36)
+    _put_fixed(frame, f"J/m {_format_float(joules_per_meter, 6, 1)}", (col5, 96), width=11, scale=0.34)
 
     # Fixed 1280x720 HUD slots. Keep numbers fixed-width so signs and new digits do not
     # move neighboring indicators; columns are placed by decimal-cell starts, not text length.
-    left_x = 700
-    left_val_x = 762
-    right_x = 820
-    right_val_x = 892
-    support_x = 930
-    support_l_x = 1010
-    support_r_x = 1050
-    gait_label_x = 1092
-    gait_t_x = 1134
-    gait_m_x = 1178
-    gait_hz_x = 1222
+    left_x = 735
+    left_val_x = 797
+    right_x = 855
+    right_val_x = 927
+    support_x = 985
+    support_l_x = 1036
+    support_r_x = 1088
+    gait_label_x = 1112
+    gait_t_x = 1150
+    gait_m_x = 1188
+    gait_hz_x = 1227
     cv2.putText(frame, "gait", (gait_label_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
     cv2.putText(frame, "t", (gait_t_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
     cv2.putText(frame, "m", (gait_m_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (190, 210, 235), 1)
@@ -299,20 +309,21 @@ def _draw_hud(
         color = (230, 240, 255)
         cv2.putText(frame, label, (gait_label_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1)
         _put_fixed(frame, _format_float(row["time_s"], 4, 2), (gait_t_x, row_y), width=4, scale=0.34, color=color)
-        _put_fixed(frame, _format_float(row["length_m"], 4, 2), (gait_m_x, row_y), width=4, scale=0.34, color=color)
+        _put_fixed(frame, _format_float(row["length_m"], 5, 3), (gait_m_x - 6, row_y), width=5, scale=0.32, color=color)
         _put_fixed(frame, _format_float(row["rate_hz"], 5, 2), (gait_hz_x, row_y), width=5, scale=0.34, color=color)
 
-    cv2.putText(frame, "support%", (support_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (190, 210, 235), 1)
+    cv2.putText(frame, "spt%", (support_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (190, 210, 235), 1)
     cv2.putText(frame, "L", (support_l_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (190, 210, 235), 1)
     cv2.putText(frame, "R", (support_r_x, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (190, 210, 235), 1)
     for label, key_l, key_r, row_y in (
-        ("st", "left_stance", "right_stance", 58),
-        ("sg", "left_single", "right_single", 74),
-        ("db/air", "double", "airborne", 90),
+        ("gnd", "left_stance", "right_stance", 58),
+        ("sgl", "left_single", "right_single", 74),
+        ("dbl", "double", "airborne", 90),
     ):
         cv2.putText(frame, label, (support_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
         _put_fixed(frame, f"{100.0 * support_stats[key_l]:3.0f}", (support_l_x - 10, row_y), width=3, scale=0.32)
         _put_fixed(frame, f"{100.0 * support_stats[key_r]:3.0f}", (support_r_x - 10, row_y), width=3, scale=0.32)
+    cv2.putText(frame, "air", (support_r_x - 42, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
     row_y = 42
     row_step = 15
     for left_i, right_i in _paired_joint_rows(joint_names):
@@ -403,11 +414,16 @@ def _recent_step_stats(events: deque[tuple[int, str, float]], cycle_window: int,
     left_steps: list[tuple[float, float]] = []
     right_steps: list[tuple[float, float]] = []
     full_cycles: list[tuple[float, float]] = []
+    approved_steps: list[bool] = []
     previous_by_side: dict[str, tuple[int, float]] = {}
     previous_event: tuple[int, str, float] | None = None
     for frame, side, root_x in events:
         if previous_event is not None and previous_event[1] != side:
             step = ((frame - previous_event[0]) * dt, root_x - previous_event[2])
+            approved_steps.append(
+                step[0] >= BOOTSTRAP_APPROVED_STEP_DURATION_S
+                and step[1] >= BOOTSTRAP_APPROVED_STEP_ADVANCE_M
+            )
             if side == "L":
                 left_steps.append(step)
             else:
@@ -417,10 +433,13 @@ def _recent_step_stats(events: deque[tuple[int, str, float]], cycle_window: int,
             full_cycles.append(((frame - previous_frame) * dt, root_x - previous_x))
         previous_by_side[side] = (frame, root_x)
         previous_event = (frame, side, root_x)
+    recent_approved_steps = approved_steps[-2 * cycle_window :]
+    approved_fraction = float(np.mean(recent_approved_steps)) if recent_approved_steps else 0.0
     return {
         "L": _mean_stats(left_steps[-cycle_window:]),
         "R": _mean_stats(right_steps[-cycle_window:]),
         "C": _mean_stats(full_cycles[-cycle_window:]),
+        "approved_fraction": approved_fraction,
     }
 
 
@@ -758,6 +777,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         hud_fsep_m = float(np.mean(fsep_window))
         hud_ksep_m = float(np.mean(ksep_window))
         hud_step_stats = _recent_step_stats(touchdown_events, args_cli.camera_cycle_window, dt)
+        hud_approved_step_fraction = hud_step_stats["approved_fraction"]
         root_x_array = np.asarray(tuple(root_x_window), dtype=np.float32)
         if root_x_array.size >= 2:
             hud_window_distance = max(float(root_x_array[-1] - root_x_array[0]), 1.0e-3)
@@ -834,6 +854,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hud_fsep_m,
                 hud_ksep_m,
                 hud_joules_per_meter,
+                hud_approved_step_fraction,
             )
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
@@ -870,6 +891,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "final_y_distance_m": y_distance,
             "final_hud_positive_joint_work_j": hud_positive_work_j,
             "final_hud_joules_per_meter": hud_joules_per_meter,
+            "final_hud_approved_step_fraction": hud_approved_step_fraction,
+            "bootstrap_approved_step_advance_m": BOOTSTRAP_APPROVED_STEP_ADVANCE_M,
+            "bootstrap_approved_step_duration_s": BOOTSTRAP_APPROVED_STEP_DURATION_S,
             "final_hud_step_stats": hud_step_stats,
             "fall_reset_height": args_cli.fall_reset_height,
             "fall_reset_count": fall_reset_count,

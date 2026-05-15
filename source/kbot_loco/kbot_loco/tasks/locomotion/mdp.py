@@ -242,6 +242,118 @@ def valid_step_root_advance_reward(
     return reward * moving.float()
 
 
+def step_advance_margin_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_cycle_hz: float,
+    min_step_advance: float,
+    max_step_advance: float,
+    short_step_penalty_scale: float,
+    min_step_duration: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Signed completed-step reward: negative below the minimum, positive toward the speed target."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    command = env.command_manager.get_command(command_name)
+    cmd_vx = torch.clamp(command[:, 0], min=0.0)
+    target_advance = torch.clamp(
+        cmd_vx / max(2.0 * target_cycle_hz, 1.0e-6),
+        min=min_step_advance,
+        max=max_step_advance,
+    )
+    root_x = asset.data.root_pos_w[:, 0]
+
+    last_root_name = "_kbot_step_margin_touchdown_root_x"
+    last_foot_name = "_kbot_step_margin_touchdown_foot"
+    last_time_name = "_kbot_step_margin_touchdown_time"
+    last_root = getattr(env, last_root_name, None)
+    last_foot = getattr(env, last_foot_name, None)
+    last_time = getattr(env, last_time_name, None)
+    if last_root is None or last_root.shape != root_x.shape or last_root.device != root_x.device:
+        last_root = root_x.clone()
+    if last_foot is None or last_foot.shape != root_x.shape or last_foot.device != root_x.device:
+        last_foot = torch.full((env.num_envs,), -1, dtype=torch.long, device=root_x.device)
+    current_time = env.episode_length_buf.to(root_x.dtype) * env.step_dt
+    if last_time is None or last_time.shape != root_x.shape or last_time.device != root_x.device:
+        last_time = current_time.clone()
+
+    reset = env.episode_length_buf <= 1
+    last_root = torch.where(reset, root_x, last_root)
+    last_foot = torch.where(reset, torch.full_like(last_foot, -1), last_foot)
+    last_time = torch.where(reset, current_time, last_time)
+
+    reward = torch.zeros_like(root_x)
+    for foot_i in range(first_contact.shape[1]):
+        touchdown = first_contact[:, foot_i]
+        alternating = last_foot >= 0
+        alternating &= last_foot != foot_i
+        enough_time = (current_time - last_time) >= min_step_duration
+        valid_event = touchdown & alternating
+
+        advance = root_x - last_root
+        margin = advance - min_step_advance
+        positive = torch.clamp(
+            margin / torch.clamp(target_advance - min_step_advance, min=1.0e-4),
+            min=0.0,
+            max=1.0,
+        )
+        negative = torch.clamp(margin / max(min_step_advance, 1.0e-6), min=-1.0, max=0.0)
+        signed = torch.where(enough_time, positive, torch.zeros_like(positive)) + short_step_penalty_scale * negative
+        reward = torch.where(valid_event, signed, reward)
+
+        last_root = torch.where(touchdown, root_x, last_root)
+        last_foot = torch.where(touchdown, torch.full_like(last_foot, foot_i), last_foot)
+        last_time = torch.where(touchdown, current_time, last_time)
+
+    moving = torch.norm(command[:, :2], dim=1) > 0.05
+    setattr(env, last_root_name, last_root)
+    setattr(env, last_foot_name, last_foot)
+    setattr(env, last_time_name, last_time)
+    return reward * moving.float()
+
+
+def dense_single_support_step_progress_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_cycle_hz: float,
+    max_step_advance: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Dense root-advance progress during single support, reset at each touchdown."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    single_support = torch.sum(in_contact.int(), dim=1) == 1
+    command = env.command_manager.get_command(command_name)
+    cmd_vx = torch.clamp(command[:, 0], min=0.0)
+    target_advance = torch.clamp(cmd_vx / max(2.0 * target_cycle_hz, 1.0e-6), min=1.0e-4, max=max_step_advance)
+    root_x = asset.data.root_pos_w[:, 0]
+
+    last_root_name = "_kbot_dense_step_progress_root_x"
+    last_root = getattr(env, last_root_name, None)
+    if last_root is None or last_root.shape != root_x.shape or last_root.device != root_x.device:
+        last_root = root_x.clone()
+
+    reset = env.episode_length_buf <= 1
+    last_root = torch.where(reset, root_x, last_root)
+    advance = root_x - last_root
+    progress = torch.clamp(advance / target_advance, min=0.0, max=1.0)
+
+    any_touchdown = torch.any(first_contact, dim=1)
+    last_root = torch.where(any_touchdown, root_x, last_root)
+
+    moving = torch.norm(command[:, :2], dim=1) > 0.05
+    setattr(env, last_root_name, last_root)
+    return progress * single_support.float() * moving.float()
+
+
 def supported_forward_velocity_reward(
     env: ManagerBasedRLEnv,
     command_name: str,

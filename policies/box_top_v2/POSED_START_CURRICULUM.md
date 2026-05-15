@@ -126,13 +126,17 @@ Stage ID:
 Stage ID:
   S5_STRAIGHT_CONTACT_QUALITY_WALK
   Parent: S4_ANTI_SHUFFLE_WALK
-  Task: UNKNOWN
+  Task: Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0 currently, but likely needs explicit sub-stage configs.
   Training budget: UNKNOWN
-  Purpose: Improve yaw, lateral drift, foot flatness, support fractions, and contact quality after real steps exist.
-  Promotion gates: UNKNOWN
-  Reject gates: UNKNOWN
+  Purpose: Convert the posed-start shuffle into stable straight walking before speed expansion.
+  Promotion gates:
+    Sub-stage gates must pass in order; see Stage 5 Sub-Curriculum.
+  Reject gates:
+    Do not promote if cadence improves by lowering the body into collapse.
+    Do not promote if speed improves while cycle_root_advance_mean_m remains near zero.
+    Do not promote if valid_step_root_advance reward remains unreachable.
   Next stage: S6_SPEED_RANGE_RAMP_WALK
-  Do-not-optimize warning: UNKNOWN
+  Do-not-optimize warning: Do not optimize speed in S5. S5 exists to make the gait real, tall, straight, and support-safe.
 
 Stage ID:
   S6_SPEED_RANGE_RAMP_WALK
@@ -212,6 +216,113 @@ run = logs/rsl_rl/kbot_forward_flat/2026-05-09_02-36-29_v2_5_walk_only_contact_q
 checkpoint = model_947.pt
 decision = REJECT
 reason = high cadence, tiny root advance, poor speed tracking
+```
+
+Current Stage 5 evidence:
+
+```text
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_08-43-54_v2_5_step_gate_007_from_806
+checkpoint = model_885.pt
+decision = REVIEW_VIDEO
+summary = best current normal-speed posed-start baseline before the latest continuations
+speed_tracking_ratio = 0.7647
+step_root_advance_mean_m = 0.0065
+cycle_root_advance_mean_m = 0.0133
+cycle_cadence_hz = 6.74
+root_height_p05_m = 0.8502
+
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_14-30-16_v2_5_step_gate_007_normal_continue_from_885
+checkpoint = model_964.pt
+decision = REVIEW_VIDEO
+summary = cadence improved, but step advance and speed regressed; usable as evidence, not a promotion
+speed_tracking_ratio = 0.6924
+step_root_advance_mean_m = 0.0055
+cycle_root_advance_mean_m = 0.0129
+cycle_cadence_hz = 5.89
+root_height_p05_m = 0.8479
+
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_14-36-39_v2_5_step_gate_007_normal_continue_from_964
+checkpoint = model_1043.pt
+decision = REVIEW_VIDEO
+summary = cadence and step advance improved, but speed overshot and height margin degraded; not a clean continuation seed
+speed_tracking_ratio = 1.5025
+step_root_advance_mean_m = 0.0091
+cycle_root_advance_mean_m = 0.0018
+cycle_cadence_hz = 4.68
+root_height_p05_m = 0.8125
+```
+
+## Stage 5 Sub-Curriculum
+
+Stage 5 is too large to train as one undifferentiated gait-quality phase. The current policy can trade high cadence for lower height, overspeed, or near-zero cycle advance. Split Stage 5 into explicit sub-stages before entering speed training:
+
+```text
+Stage ID:
+  S5A_CADENCE_CHATTER_REDUCTION
+  Parent: S4_ANTI_SHUFFLE_WALK
+  Task: Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0 or a derived cadence-only config.
+  Training budget: UNKNOWN
+  Purpose: Lower contact chatter and per-foot cycle cadence while preserving tall posed-start geometry.
+  Promotion gates:
+    cycle_cadence_hz trends downward.
+    root_height_p05_m stays above the posed-start safety floor.
+    fsep/ksep stay near target.
+    low_body terminations do not increase materially.
+  Reject gates:
+    lower cadence caused by crouch/collapse.
+    speed overshoot used to hide bad step mechanics.
+    cycle_root_advance_mean_m remains near zero after cadence improves.
+  Next stage: S5B_VALID_STEP_GATE_ACCESS
+  Do-not-optimize warning: Do not reward speed here. The goal is slower, cleaner contact timing.
+
+Stage ID:
+  S5B_VALID_STEP_GATE_ACCESS
+  Parent: S5A_CADENCE_CHATTER_REDUCTION
+  Task: UNKNOWN
+  Training budget: UNKNOWN
+  Purpose: Make the policy actually see the valid-step reward often enough to learn from it.
+  Promotion gates:
+    approved/valid step percentage reaches a useful training signal range.
+    valid_step_root_advance reward is nonzero in training diagnostics.
+    step_root_advance_mean_m improves without losing height/width.
+  Reject gates:
+    valid-step percentage remains too sparse.
+    dense progress reward improves but gated valid-step reward remains zero.
+  Next stage: S5C_STEP_LENGTH_RAMP
+  Do-not-optimize warning: A sparse gate that never fires is a monitor, not a training signal.
+
+Stage ID:
+  S5C_STEP_LENGTH_RAMP
+  Parent: S5B_VALID_STEP_GATE_ACCESS
+  Task: UNKNOWN
+  Training budget: UNKNOWN
+  Purpose: Raise root advance per step toward a speed-scaled walking target while keeping cadence in walking range.
+  Promotion gates:
+    step_root_advance_mean_m and cycle_root_advance_mean_m increase together.
+    cycle_cadence_hz remains within the current S5 target band.
+    no knee/foot crossing, fsep/ksep stay near target.
+  Reject gates:
+    step length comes from sliding, yawing, lateral drift, or falling forward.
+    step_root_advance improves but cycle_root_advance does not.
+  Next stage: S5D_STRAIGHTNESS_AND_SUPPORT_QUALITY
+  Do-not-optimize warning: Do not chase long steps before the robot can repeat valid alternating contacts.
+
+Stage ID:
+  S5D_STRAIGHTNESS_AND_SUPPORT_QUALITY
+  Parent: S5C_STEP_LENGTH_RAMP
+  Task: UNKNOWN
+  Training budget: UNKNOWN
+  Purpose: Clean yaw drift, lateral drift, foot flatness, support fractions, and edge-walk proxies after real steps exist.
+  Promotion gates:
+    y distance trends toward zero.
+    x distance tracks command over the 30 s rollout.
+    support percentages and edge-walk proxies are acceptable.
+    J/m is tracked but not optimized yet.
+  Reject gates:
+    straight-line metrics improve by returning to in-place shuffling.
+    support quality improves only by suppressing steps.
+  Next stage: S6_SPEED_RANGE_RAMP_WALK
+  Do-not-optimize warning: Energy and speed are diagnostics in S5D, not primary objectives.
 ```
 
 ## Naming
