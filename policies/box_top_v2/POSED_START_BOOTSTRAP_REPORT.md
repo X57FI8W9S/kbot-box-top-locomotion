@@ -867,6 +867,71 @@ lateral_drift_m_per_m         0.104
 
 Interpretation: the evaluator now catches the exploit, but the first reward patch did not produce useful walking. The policy either keeps high-cadence shuffling while tracking speed (`model_800`) or slows down into low-advance shuffling (`model_947`). `valid_step_root_advance` stayed at zero in training logs, so the reward is too sparse or too hard to discover from this seed. Do not continue this run.
 
+Later S4.2 anti-shuffle attempt from the conservative `model_648.pt` seed:
+
+```text
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-03-47_v2_5_s4_2_chatter_from_648
+task = Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterSuppression-v0
+checkpoint = model_727.pt
+decision = REJECT
+cycle_cadence_hz               7.94   (baseline model_648: 8.06)
+approved_step_fraction         0.057  (baseline model_648: 0.122)
+step_root_advance_mean_m       0.0054 (baseline model_648: 0.0072)
+cycle_root_advance_mean_m      0.0116 (baseline model_648: 0.0154)
+root_height_p05_m              0.8508 (baseline model_648: 0.8545)
+```
+
+Interpretation: this was not a keeper. It barely moved cadence and weakened the useful approved-step signal. The mistake was treating the relaxed gate as expendable after it had become the only nonzero completed-step signal. S4.2 must recover the policy-visible `step_advance_margin_reward` gate at the same scale as the HUD/evaluator `apv%` definition: 8 mm alternating root advance and 70 ms alternating-step duration. The stricter air-time `valid_step_root_advance` term remains diagnostic/disabled until the policy produces real swing clearance.
+
+Recovered-gate follow-up:
+
+```text
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-42-06_v2_5_s4_2_apv_gate_recover_from_648
+checkpoint = model_697.pt
+decision = REJECT
+cycle_cadence_hz               7.79   (baseline model_648: 8.06)
+approved_step_fraction         0.080  (baseline model_648: 0.122)
+step_root_advance_mean_m       0.0061 (baseline model_648: 0.0072)
+cycle_root_advance_mean_m      0.0131 (baseline model_648: 0.0154)
+root_height_p05_m              0.8517 (baseline model_648: 0.8545)
+```
+
+Interpretation: recovering the 8 mm / 70 ms gate was necessary but not sufficient. A 5 Hz cycle ceiling was still too abrupt from the 8.06 Hz parent and caused the policy to pay a large cadence penalty while losing approved steps and advance. The next S4.2 attempt should keep the recovered approved-step gate, but start the cadence ceiling near the parent at about 7.5 Hz. S4.3 can ramp lower only after approved steps and root advance survive.
+
+7.5 Hz ceiling follow-up:
+
+```text
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-47-01_v2_5_s4_2_apv_gate_75hz_from_648
+checkpoint = model_697.pt
+decision = REJECT
+cycle_cadence_hz               8.33   (baseline model_648: 8.06)
+approved_step_fraction         0.104  (baseline model_648: 0.122)
+step_root_advance_mean_m       0.0065 (baseline model_648: 0.0072)
+cycle_root_advance_mean_m      0.0134 (baseline model_648: 0.0154)
+speed_tracking_ratio           1.508  (baseline model_648: 1.102)
+root_height_p05_m              0.8533 (baseline model_648: 0.8545)
+```
+
+Interpretation: a soft ramp ceiling alone did not solve S4.2 either. It preserved height, support width, and swing clearance, but the old high-frequency overspeed shuffle remained dominant. Do not continue from this run. The next anti-shuffle attempt should reduce velocity reward pressure further or otherwise make preserving approved steps and root advance dominate speed tracking during S4.2.
+
+Next test: make S4.2 explicitly `apv`-dominant. Keep the 8 mm / 70 ms approved-step gate and 7.5 Hz first cadence ceiling, but reduce `track_lin_vel_xy_exp`, `world_forward_velocity_clip`, and `supported_forward_velocity` so speed tracking cannot dominate the anti-shuffle objective.
+
+`apv`-dominant follow-up:
+
+```text
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-51-22_v2_5_s4_2_apv_dominant_from_648
+checkpoint = model_697.pt
+decision = REJECT
+cycle_cadence_hz               8.33   (baseline model_648: 8.06)
+approved_step_fraction         0.111  (baseline model_648: 0.122)
+step_root_advance_mean_m       0.0066 (baseline model_648: 0.0072)
+cycle_root_advance_mean_m      0.0138 (baseline model_648: 0.0154)
+speed_tracking_ratio           1.531  (baseline model_648: 1.102)
+root_height_p05_m              0.8534 (baseline model_648: 0.8545)
+```
+
+Interpretation: reducing positive speed reward pressure improved neither cadence nor root advance. Geometry and clearance remain good, but the policy keeps the old overspeed shuffle and accepts the cadence penalty. Stop stacking short S4.2 continuations from these failed variants. The next branch should be a materially different anti-shuffle method, not another small cadence-ceiling or speed-weight tweak.
+
 ## Immediate To-Do
 
 1. Keep `fsep` and `ksep` in `evaluate_checkpoint.py`.
@@ -875,7 +940,7 @@ Interpretation: the evaluator now catches the exploit, but the first reward patc
 4. Do not continue from `2026-05-09_02-36-29_v2_5_walk_only_contact_quality_from_648/model_947.pt`.
 5. Use `2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep/model_648.pt` as the conservative active seed.
 6. Keep the new evaluator gates for cadence, step root advance, cycle root advance, and lateral drift.
-7. Revise the reward before the next run: make valid step/root advance less sparse, likely by using a shaped continuous root-advance target during swing/stance instead of only touchdown events.
+7. Revise the next S4.2 run around the recovered approved-step gate: `step_advance_margin_reward` at 0.008 m / 0.07 s, with command speed above the moving-command threshold and `max_cycle_hz` initially near 7.5.
 8. Keep walking-only support semantics: no meaningful flight phase, controlled support transitions, and root advance through supported steps. Cadence remains an anti-chatter guard, not the definition of walking.
 9. Reject standing, fake in-place stepping, edge-walk shuffling, and collapse/crawl movement even if some gait counters pass.
 10. Run 30 s playback and diagnostics before any gait continuation.

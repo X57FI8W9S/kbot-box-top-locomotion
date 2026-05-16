@@ -144,6 +144,14 @@ def _format_float(value: float, width: int, precision: int) -> str:
     return f"{value:{width}.{precision}f}"[-width:]
 
 
+def _nanmean_window(values: deque[float]) -> float:
+    if not values:
+        return 0.0
+    array = np.asarray(tuple(values), dtype=np.float32)
+    finite = array[np.isfinite(array)]
+    return float(np.mean(finite)) if finite.size else 0.0
+
+
 def _short_joint_name(name: str) -> str:
     side = "L" if name.startswith("left_") else "R" if name.startswith("right_") else ""
     if "hip_pitch" in name:
@@ -252,6 +260,8 @@ def _draw_hud(
     ksep_m: float,
     joules_per_meter: float,
     approved_step_fraction: float,
+    left_swing_clearance_m: float,
+    right_swing_clearance_m: float,
 ) -> np.ndarray:
     frame = np.ascontiguousarray(frame)
     height, width = frame.shape[:2]
@@ -259,7 +269,7 @@ def _draw_hud(
     panel_x0 = 18
     panel_y0 = 18
     panel_x1 = width - 18
-    panel_y1 = 110
+    panel_y1 = 122
     cv2.rectangle(overlay, (panel_x0, panel_y0), (panel_x1, panel_y1), (0, 0, 0), -1)
     frame = cv2.addWeighted(overlay, 0.48, frame, 0.52, 0)
 
@@ -324,6 +334,10 @@ def _draw_hud(
         _put_fixed(frame, f"{100.0 * support_stats[key_l]:3.0f}", (support_l_x - 10, row_y), width=3, scale=0.32)
         _put_fixed(frame, f"{100.0 * support_stats[key_r]:3.0f}", (support_r_x - 10, row_y), width=3, scale=0.32)
     cv2.putText(frame, "air", (support_r_x - 42, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+    cv2.putText(frame, "clr", (support_x, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+    _put_fixed(frame, f"{1000.0 * left_swing_clearance_m:3.0f}", (support_l_x - 10, 106), width=3, scale=0.32)
+    _put_fixed(frame, f"{1000.0 * right_swing_clearance_m:3.0f}", (support_r_x - 10, 106), width=3, scale=0.32)
+    cv2.putText(frame, "mm", (support_r_x - 42, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
     row_y = 42
     row_step = 15
     for left_i, right_i in _paired_joint_rows(joint_names):
@@ -489,6 +503,7 @@ def _set_side_camera(
 
 def _summary(values: list[float]) -> dict[str, float]:
     array = np.asarray(values, dtype=np.float64)
+    array = array[np.isfinite(array)]
     if array.size == 0:
         return {"mean": 0.0, "p95": 0.0, "max": 0.0, "final": 0.0}
     return {
@@ -586,6 +601,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     hip_roll_yaw_window: deque[np.ndarray] = deque()
     fsep_window: deque[float] = deque()
     ksep_window: deque[float] = deque()
+    left_swing_clearance_window: deque[float] = deque()
+    right_swing_clearance_window: deque[float] = deque()
     left_contact_window: deque[bool] = deque()
     right_contact_window: deque[bool] = deque()
     positive_work_window: deque[float] = deque()
@@ -619,6 +636,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "hip_roll_yaw_window_rms": [],
         "fsep_m": [],
         "ksep_m": [],
+        "left_swing_clearance_m": [],
+        "right_swing_clearance_m": [],
         "x_distance_m": [],
         "y_distance_m": [],
         "positive_joint_work_j": [],
@@ -642,6 +661,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             hip_roll_yaw_window.clear()
             fsep_window.clear()
             ksep_window.clear()
+            left_swing_clearance_window.clear()
+            right_swing_clearance_window.clear()
             left_contact_window.clear()
             right_contact_window.clear()
             positive_work_window.clear()
@@ -721,6 +742,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         foot_pos_w = robot.data.body_pos_w[0, foot_body_ids]
         foot_quat_w = robot.data.body_quat_w[0, foot_body_ids]
         sole_pos_w = foot_pos_w + quat_apply(foot_quat_w, sole_center_offsets)
+        sole_clearance = torch.clamp(sole_pos_w[:, 2], min=0.0).detach().cpu().numpy()
         root_pos_w = robot.data.root_pos_w[0:1]
         root_quat_w = robot.data.root_quat_w[0:1].expand(2, -1)
         sole_pos_b = quat_apply_inverse(root_quat_w, sole_pos_w - root_pos_w)
@@ -730,6 +752,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         knee_sep_y = abs(float(knee_pos_b[0, 1].item() - knee_pos_b[1, 1].item()))
         fsep_window.append(foot_sep_y)
         ksep_window.append(knee_sep_y)
+        left_swing_clearance_window.append(float(sole_clearance[0]) if not bool(foot_contact[0].item()) else float("nan"))
+        right_swing_clearance_window.append(float(sole_clearance[1]) if not bool(foot_contact[1].item()) else float("nan"))
         for values in (
             speed_window,
             command_window,
@@ -740,6 +764,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             hip_roll_yaw_window,
             fsep_window,
             ksep_window,
+            left_swing_clearance_window,
+            right_swing_clearance_window,
             left_contact_window,
             right_contact_window,
             positive_work_window,
@@ -765,6 +791,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         rollout_metrics["hip_roll_yaw_window_rms"].append(hip_roll_yaw_window_rms)
         rollout_metrics["fsep_m"].append(foot_sep_y)
         rollout_metrics["ksep_m"].append(knee_sep_y)
+        rollout_metrics["left_swing_clearance_m"].append(
+            float(sole_clearance[0]) if not bool(foot_contact[0].item()) else float("nan")
+        )
+        rollout_metrics["right_swing_clearance_m"].append(
+            float(sole_clearance[1]) if not bool(foot_contact[1].item()) else float("nan")
+        )
         rollout_metrics["x_distance_m"].append(x_distance)
         rollout_metrics["y_distance_m"].append(y_distance)
         rollout_metrics["positive_joint_work_j"].append(positive_work_step)
@@ -776,6 +808,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         hud_root_height = root_height_window_mean
         hud_fsep_m = float(np.mean(fsep_window))
         hud_ksep_m = float(np.mean(ksep_window))
+        hud_left_swing_clearance_m = _nanmean_window(left_swing_clearance_window)
+        hud_right_swing_clearance_m = _nanmean_window(right_swing_clearance_window)
         hud_step_stats = _recent_step_stats(touchdown_events, args_cli.camera_cycle_window, dt)
         hud_approved_step_fraction = hud_step_stats["approved_fraction"]
         root_x_array = np.asarray(tuple(root_x_window), dtype=np.float32)
@@ -855,6 +889,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hud_ksep_m,
                 hud_joules_per_meter,
                 hud_approved_step_fraction,
+                hud_left_swing_clearance_m,
+                hud_right_swing_clearance_m,
             )
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
@@ -887,6 +923,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "final_hud_fsep_m": hud_fsep_m,
             "final_hud_ksep_m": hud_ksep_m,
             "final_hud_sep_m": hud_fsep_m,
+            "final_hud_left_swing_clearance_m": hud_left_swing_clearance_m,
+            "final_hud_right_swing_clearance_m": hud_right_swing_clearance_m,
             "final_x_distance_m": x_distance,
             "final_y_distance_m": y_distance,
             "final_hud_positive_joint_work_j": hud_positive_work_j,

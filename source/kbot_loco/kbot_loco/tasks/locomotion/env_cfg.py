@@ -1215,6 +1215,17 @@ class KBotForwardFlatV25PoseGaitQualityEnvCfg(KBotForwardFlatV25ScratchPoseWidth
 
 
 @configclass
+class KBotForwardFlatV25S42ChatterSuppressionEnvCfg(KBotForwardFlatV25PoseGaitQualityEnvCfg):
+    """S4.2: suppress contact chatter from model_648 without training speed."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.contact_chatter_l1.weight = -10.0
+        self.rewards.contact_chatter_l1.params["min_air_time"] = 0.10
+
+
+@configclass
 class KBotForwardFlatV2ScratchActionBootstrapEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
     """Scratch bootstrap with a short V1-derived recovery-action prior."""
 

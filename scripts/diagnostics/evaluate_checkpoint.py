@@ -53,6 +53,8 @@ parser.add_argument("--max_cycle_cadence_hz", type=float, default=2.50)
 parser.add_argument("--min_cmd_vx_for_step_gates", type=float, default=0.05)
 parser.add_argument("--min_step_root_advance_m", type=float, default=0.02)
 parser.add_argument("--min_cycle_root_advance_m", type=float, default=0.04)
+parser.add_argument("--approved_step_advance_m", type=float, default=0.008)
+parser.add_argument("--approved_step_duration_s", type=float, default=0.07)
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -97,6 +99,14 @@ def _summary(values: list[float]) -> dict[str, float]:
         "min": float(np.min(array)),
         "final": float(array[-1]),
     }
+
+
+def _finite_summary(values: np.ndarray) -> dict[str, float]:
+    array = np.asarray(values, dtype=np.float64)
+    array = array[np.isfinite(array)]
+    if array.size == 0:
+        return {"mean": 0.0, "p05": 0.0, "p95": 0.0, "max": 0.0, "min": 0.0, "final": 0.0}
+    return _summary(array.tolist())
 
 
 def _rms_centered(values: np.ndarray) -> float:
@@ -155,6 +165,64 @@ def _std(rows: list[dict], key: str) -> float:
 def _cadence_hz(rows: list[dict]) -> float:
     duration = _mean(rows, "duration_s")
     return 1.0 / duration if duration > 1.0e-6 else 0.0
+
+
+def _fraction(rows: list[dict], key: str) -> float:
+    if not rows:
+        return 0.0
+    return float(np.mean([bool(row[key]) for row in rows]))
+
+
+def _baseline_scorecard(path: str | None) -> dict[str, float]:
+    if path is None:
+        return {}
+    with Path(path).open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if "scorecard" in data:
+        return data["scorecard"]
+    if "metrics" in data and "scorecard" in data["metrics"]:
+        return data["metrics"]["scorecard"]
+    return data
+
+
+def _percent_change(current: float, baseline: float) -> float:
+    if abs(baseline) < 1.0e-9:
+        return 0.0 if abs(current) < 1.0e-9 else math.inf
+    return 100.0 * (current - baseline) / abs(baseline)
+
+
+def _baseline_comparison(scorecard: dict[str, float], baseline: dict[str, float]) -> dict[str, dict[str, float]]:
+    keys = (
+        "cycle_cadence_hz",
+        "step_root_advance_mean_m",
+        "cycle_root_advance_mean_m",
+        "approved_step_fraction",
+        "left_approved_step_fraction",
+        "right_approved_step_fraction",
+        "root_height_p05_m",
+        "fsep_mean_m",
+        "ksep_mean_m",
+        "speed_tracking_ratio",
+        "yaw_drift_rad_per_m",
+        "lateral_drift_m_per_m",
+        "swing_sole_clearance_mean_left_m",
+        "swing_sole_clearance_mean_right_m",
+        "swing_sole_clearance_p05_left_m",
+        "swing_sole_clearance_p05_right_m",
+    )
+    comparison: dict[str, dict[str, float]] = {}
+    for key in keys:
+        if key not in scorecard or key not in baseline:
+            continue
+        current = float(scorecard[key])
+        base = float(baseline[key])
+        comparison[key] = {
+            "baseline": base,
+            "current": current,
+            "delta": current - base,
+            "percent_change": _percent_change(current, base),
+        }
+    return comparison
 
 
 def _events(
@@ -427,6 +495,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "foot_up_z": [],
         "foot_forward_z": [],
         "foot_lateral_z": [],
+        "sole_clearance": [],
         "fsep": [],
         "ksep": [],
         "stance_slip": [],
@@ -460,6 +529,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         forward_z = quat_apply(foot_quat, forward_b)[:, 2].detach().cpu().numpy()
         lateral_z = quat_apply(foot_quat, lateral_b)[:, 2].detach().cpu().numpy()
         sole_pos_w = robot.data.body_pos_w[0, foot_body_ids] + quat_apply(foot_quat, sole_center_offsets)
+        sole_clearance = torch.clamp(sole_pos_w[:, 2], min=0.0).detach().cpu().numpy()
         root_pos_w = robot.data.root_pos_w[0:1]
         root_quat_w = robot.data.root_quat_w[0:1].expand(2, -1)
         sole_pos_b = quat_apply_inverse(root_quat_w, sole_pos_w - root_pos_w)
@@ -487,6 +557,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         series["foot_up_z"].append(up_z)
         series["foot_forward_z"].append(forward_z)
         series["foot_lateral_z"].append(lateral_z)
+        series["sole_clearance"].append(sole_clearance)
         series["fsep"].append(fsep)
         series["ksep"].append(ksep)
         series["stance_slip"].append(stance_slip)
@@ -515,6 +586,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     pad_contact = arrays["pad_contact"].astype(bool)
     double_support = contact[:, 0] & contact[:, 1]
     airborne = ~contact[:, 0] & ~contact[:, 1]
+    swing_clearance = np.where(~contact, arrays["sole_clearance"], np.nan)
+    left_swing_clearance = swing_clearance[:, 0]
+    right_swing_clearance = swing_clearance[:, 1]
     if use_pad_contacts:
         full_support = np.column_stack((pad_contact[:, 0] & pad_contact[:, 1], pad_contact[:, 2] & pad_contact[:, 3]))
         toe_only = np.column_stack((pad_contact[:, 1] & ~pad_contact[:, 0], pad_contact[:, 3] & ~pad_contact[:, 2]))
@@ -549,6 +623,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     right_steps = [row for row in steps if row["step_foot"] == "R"]
     left_cycles = [row for row in cycles if row["cycle_foot"] == "L"]
     right_cycles = [row for row in cycles if row["cycle_foot"] == "R"]
+    for row in steps:
+        row["approved_step"] = (
+            row["root_advance_m"] >= args_cli.approved_step_advance_m
+            and row["duration_s"] >= args_cli.approved_step_duration_s
+        )
+    approved_steps = [row for row in steps if row["approved_step"]]
+    left_approved_steps = [row for row in left_steps if row["approved_step"]]
+    right_approved_steps = [row for row in right_steps if row["approved_step"]]
     step_lengths = [row["step_length_m"] for row in steps]
     step_advances = [row["root_advance_m"] for row in steps]
     step_durations = [row["duration_s"] for row in steps]
@@ -599,6 +681,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "heel_only_fraction_right": float(np.mean(heel_only[:, 1])),
         "sole_normal_z_mean_left": float(np.mean(arrays["foot_up_z"][:, 0])),
         "sole_normal_z_mean_right": float(np.mean(arrays["foot_up_z"][:, 1])),
+        "swing_sole_clearance_mean_left_m": _finite_summary(left_swing_clearance)["mean"],
+        "swing_sole_clearance_mean_right_m": _finite_summary(right_swing_clearance)["mean"],
+        "swing_sole_clearance_p05_left_m": _finite_summary(left_swing_clearance)["p05"],
+        "swing_sole_clearance_p05_right_m": _finite_summary(right_swing_clearance)["p05"],
+        "swing_sole_clearance_max_left_m": _finite_summary(left_swing_clearance)["max"],
+        "swing_sole_clearance_max_right_m": _finite_summary(right_swing_clearance)["max"],
         "stance_sole_tilt_l2_mean": float(np.mean((1.0 - np.square(arrays["foot_up_z"])) * contact)),
         "toe_down_proxy_fraction_left": float(np.mean(toe_only[:, 0])),
         "toe_down_proxy_fraction_right": float(np.mean(toe_only[:, 1])),
@@ -614,6 +702,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "step_count": len(steps),
         "left_step_count": len(left_steps),
         "right_step_count": len(right_steps),
+        "approved_step_count": len(approved_steps),
+        "left_approved_step_count": len(left_approved_steps),
+        "right_approved_step_count": len(right_approved_steps),
+        "approved_step_fraction": _fraction(steps, "approved_step"),
+        "left_approved_step_fraction": _fraction(left_steps, "approved_step"),
+        "right_approved_step_fraction": _fraction(right_steps, "approved_step"),
+        "approved_step_advance_threshold_m": args_cli.approved_step_advance_m,
+        "approved_step_duration_threshold_s": args_cli.approved_step_duration_s,
         "step_length_mean_m": float(np.mean(step_lengths)) if step_lengths else 0.0,
         "step_root_advance_mean_m": float(np.mean(step_advances)) if step_advances else 0.0,
         "step_duration_mean_s": float(np.mean(step_durations)) if step_durations else 0.0,
@@ -714,6 +810,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if not all(gates.values()) and gates["alternating_steps"] and gates["yaw_drift"] and gates["lateral_drift"]:
         decision = "REVIEW_VIDEO"
 
+    baseline_scorecard = _baseline_scorecard(args_cli.baseline_metrics)
+    baseline_comparison = _baseline_comparison(scorecard, baseline_scorecard)
+
     summary = {
         "checkpoint": checkpoint_path,
         "task": args_cli.task,
@@ -736,10 +835,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "yaw_rate": _summary(arrays["yaw_rate"].tolist()),
             "root_height": _summary(arrays["root_z"].tolist()),
             "root_roll_proxy": _summary(arrays["root_roll_proxy"].tolist()),
+            "left_swing_sole_clearance": _finite_summary(left_swing_clearance),
+            "right_swing_sole_clearance": _finite_summary(right_swing_clearance),
             "fsep": _summary(arrays["fsep"].tolist()),
             "ksep": _summary(arrays["ksep"].tolist()),
         },
         "scorecard": scorecard,
+        "baseline_metrics": args_cli.baseline_metrics,
+        "baseline_comparison": baseline_comparison,
         "gates": gates,
         "decision": decision,
     }
@@ -750,6 +853,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     (output_dir / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     lines = [f"# KBot Diagnostic Summary", "", f"Decision: {decision}", "", "## Scorecard"]
     lines.extend(f"- {key}: {value}" for key, value in scorecard.items())
+    if baseline_comparison:
+        lines.extend(["", "## Baseline Comparison"])
+        for key, values in baseline_comparison.items():
+            lines.append(
+                f"- {key}: current={values['current']} baseline={values['baseline']} "
+                f"delta={values['delta']} pct={values['percent_change']}"
+            )
     lines.extend(["", "## Gates"])
     lines.extend(f"- {key}: {'PASS' if value else 'FAIL'}" for key, value in gates.items())
     (output_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
