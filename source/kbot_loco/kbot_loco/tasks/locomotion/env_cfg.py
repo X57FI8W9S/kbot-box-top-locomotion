@@ -293,6 +293,77 @@ class KBotForwardFlatEnvCfg_PLAY(KBotForwardFlatEnvCfg):
 
 
 @configclass
+class KBotForwardFlatV1ReproEnvCfg(KBotForwardFlatEnvCfg):
+    """V1 task with an optional USD override for artifact reproduction."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        usd_path = os.environ.get("KBOT_V1_REPRO_USD_PATH")
+        if usd_path:
+            self.scene.robot.spawn.usd_path = usd_path
+
+
+@configclass
+class KBotForwardFlatV1HybridWidthLaneEnvCfg(KBotForwardFlatEnvCfg):
+    """V1 walking world with V2.5 foot-width and foot-lane pressures.
+
+    This is a compatibility branch for V1 checkpoints. It intentionally keeps
+    the V1 reset pose, command range, action scale, episode length, and gait
+    rewards, while replacing only the lateral foot geometry targets.
+    """
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        hip_axis_left_y = 0.15835
+        hip_axis_right_y = -0.15805
+        sole_center_offsets = [
+            (0.03, -0.036528655, -0.0194786795),
+            (0.03, -0.036528755, -0.0234786545),
+        ]
+
+        self.rewards.foot_lateral_spacing_l1.weight = -9.0
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.28
+
+        self.rewards.foot_lateral_lane_l1.weight = -4.0
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.08
+
+        self.rewards.foot_lateral_lane_max_l1.weight = -2.0
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.06
+
+        self.rewards.foot_sole_lateral_lane_max_l1 = RewTerm(
+            func=mdp.foot_sole_lateral_lane_max_l1,
+            weight=-44.0,
+            params={
+                "target_left_y": hip_axis_left_y,
+                "target_right_y": hip_axis_right_y,
+                "tolerance": 0.008,
+                "foot_local_offsets": sole_center_offsets,
+                "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+            },
+        )
+
+
+@configclass
+class KBotForwardFlatV1HybridWidthLaneEnvCfg_PLAY(KBotForwardFlatV1HybridWidthLaneEnvCfg):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.commands.base_velocity.resampling_time_range = (10.0, 10.0)
+        self.episode_length_s = 60.0
+
+
+@configclass
 class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
     """V2 clean-walk restart with fewer overlapping reward pressures.
 
