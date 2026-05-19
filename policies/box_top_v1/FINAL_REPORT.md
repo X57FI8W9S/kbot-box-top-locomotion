@@ -996,6 +996,83 @@ Meaning:
 
 This was a strong checkpoint. Torso signed bias was essentially gone. Remaining torso motion looked more oscillatory than biased. Hip roll/yaw improved again. Side-view inspection became the deciding factor.
 
+#### How to Run `model_11791.pt`
+
+Use this as the default V1 reproduction checkpoint:
+
+```text
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt
+```
+
+The trained USD is:
+
+```text
+assets/robot/usd/kbot_box_top3.usd
+```
+
+Do not use the later pads asset or the root pose-tuning USDs for reproducing V1. The saved run snapshot hard-codes `assets/robot/usd/kbot_box_top3.usd`.
+
+The V1 physics setup depends on these articulation root properties in `source/kbot_loco/kbot_loco/tasks/locomotion/assets.py`:
+
+```text
+enabled_self_collisions=True
+solver_position_iteration_count=8
+solver_velocity_iteration_count=2
+```
+
+These settings were present in the saved V1 run and must remain set for `model_11791.pt` to reproduce correctly. If they are missing, the same checkpoint can fail even with the same USD.
+
+Reproduce the 30 second diagnostic metrics:
+
+```bash
+cd /media/rnyx/Tapioka/TPs/kbot-rl-loco3
+
+.venv/bin/python scripts/diagnostics/evaluate_checkpoint.py \
+  --task Isaac-KBot-Forward-Flat-v0 \
+  --headless \
+  --checkpoint logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt \
+  --output_dir logs/rsl_rl/kbot_forward_flat/2026-05-19_v1_repro/diagnostics/model_11791_restored_articulation_30s \
+  --video_length 1500
+```
+
+Expected diagnostic result after restoring the V1 articulation settings:
+
+```text
+decision: REVIEW_VIDEO
+distance_m: 12.7106
+speed_mean_mps: 0.4174
+command_speed_mean_mps: 0.4362
+speed_tracking_ratio: 0.9569
+root_height_p05_m: 0.7226
+step_count: 272
+step_root_advance_mean_m: 0.04665
+cycle_root_advance_mean_m: 0.09351
+cycle_cadence_hz: 4.536
+yaw_drift_rad_per_m: 0.00634
+lateral_drift_m_per_m: 0.0671
+```
+
+Make a fresh video with the current HUD overlay:
+
+```bash
+cd /media/rnyx/Tapioka/TPs/kbot-rl-loco3
+
+.venv/bin/python scripts/rsl_rl/play_trailing.py \
+  --task Isaac-KBot-Forward-Flat-Play-v0 \
+  --num_envs 1 \
+  --checkpoint logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt \
+  --video_length 1500 \
+  --headless
+```
+
+Current restored-articulation video:
+
+```text
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-hud-model_11791-restored-articulation-current-overlay.mp4
+```
+
+Note: `play_trailing.py` currently requires the full checkpoint path for this workflow; `--load_run 2026-04-29_06-29-05 --checkpoint model_11791.pt` did not resolve the file in this reproduction pass.
+
 ### Branch I: Final Sole-Contact Push
 
 Run:
