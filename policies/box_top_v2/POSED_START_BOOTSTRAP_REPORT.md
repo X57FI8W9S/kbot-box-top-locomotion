@@ -932,17 +932,139 @@ root_height_p05_m              0.8534 (baseline model_648: 0.8545)
 
 Interpretation: reducing positive speed reward pressure improved neither cadence nor root advance. Geometry and clearance remain good, but the policy keeps the old overspeed shuffle and accepts the cadence penalty. Stop stacking short S4.2 continuations from these failed variants. The next branch should be a materially different anti-shuffle method, not another small cadence-ceiling or speed-weight tweak.
 
+Relaxed valid-step and doubled dense-progress follow-up:
+
+```text
+run = logs/rsl_rl/kbot_forward_flat/2026-05-19_17-22-33_v2_5_s4_2_valid008_dense12_from_648
+task = Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterSuppression-v0
+code change = valid_step_root_advance min_step_advance 0.020 -> 0.008; dense_single_support_step_progress default weight 6.0 -> 12.0
+parent = model_648.pt
+checkpoint = model_650.pt
+decision = REJECT
+cycle_cadence_hz               1.89   (baseline model_648: 8.06)
+approved_step_fraction         0.205  (baseline model_648: 0.122)
+step_root_advance_mean_m       0.0022 (baseline model_648: 0.0072)
+cycle_root_advance_mean_m      0.0008 (baseline model_648: 0.0154)
+distance_m                     0.054  (baseline model_648: 3.721)
+root_height_p05_m              0.787  (baseline model_648: 0.855)
+fsep_mean_m                    0.296  (baseline model_648: 0.307)
+ksep_mean_m                    0.319  (baseline model_648: 0.321)
+```
+
+Final checkpoint:
+
+```text
+checkpoint = model_797.pt
+decision = REJECT
+approved_step_fraction         0.089
+step_root_advance_mean_m       0.0040
+cycle_root_advance_mean_m     -0.0001
+distance_m                     ~0
+root_height_p05_m              0.791
+```
+
+Interpretation: this branch made the reward gate visible but taught the wrong behavior. `apv%` reached the desired early bootstrap visibility range around 10-25%, but the policy satisfied it by nearly stopping/crouching instead of producing forward walking. The dense-progress weight increase alone is not enough; it can improve scalar pressure while the actual completed-step/root-advance metrics collapse. Do not continue from this branch. The next S4.2 method must preserve a minimum forward-distance / cycle-advance floor while using the relaxed gate.
+
+### Pipeline isolation after V1 hybrid test
+
+The V1 hybrid experiment did not overwrite the V2.5 checkpoint files. The failure above came from a different problem: the live V2.5 task definition had evolved since `model_648.pt` was trained. The original `model_648.pt` run snapshot did not include these later S4 terms:
+
+```text
+valid_step_root_advance
+step_advance_margin
+dense_single_support_step_progress
+walking_cycle_cadence_above_l2
+contact_chatter_l1
+```
+
+That means continuing `model_648.pt` under the live `Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0` / `S4_2-ChatterSuppression-v0` stack is not a small continuation. It silently changes the training pipeline.
+
+To prevent V1, V1 hybrid, V2.5 baseline, and V2.5 S4 experiments from mixing, the code now keeps explicit parallel task IDs:
+
+```text
+V1 reproduction:
+  Isaac-KBot-Forward-Flat-V1-Repro-v0
+
+V1 plus V2.5 width/lane pressure:
+  Isaac-KBot-Forward-Flat-V1-Hybrid-WidthLane-v0
+  Isaac-KBot-Forward-Flat-V1-Hybrid-WidthLane-Play-v0
+
+V2.5 current experimental pose-gait stack:
+  Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0
+  Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterSuppression-v0
+
+V2.5 frozen model_648-compatible stack:
+  Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality648Compat-v0
+  Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterFrom648Compat-v0
+```
+
+Use the `648Compat` task for any run that claims to reproduce or branch directly from `2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep/model_648.pt`. Use the non-compat S4 task only when the intention is to run the newer experimental reward stack.
+
 ## Immediate To-Do
 
 1. Keep `fsep` and `ksep` in `evaluate_checkpoint.py`.
 2. Keep hard/reporting gates for minimum support width.
 3. Do not continue from `2026-05-09_01-21-36_v2_5_gait_quality_continue_from_947/model_1246.pt`.
 4. Do not continue from `2026-05-09_02-36-29_v2_5_walk_only_contact_quality_from_648/model_947.pt`.
-5. Use `2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep/model_648.pt` as the conservative active seed.
+5. Use `2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep/model_648.pt` as the conservative active seed only with `Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality648Compat-v0` or an explicitly named child task.
 6. Keep the new evaluator gates for cadence, step root advance, cycle root advance, and lateral drift.
 7. Revise the next S4.2 run around the recovered approved-step gate: `step_advance_margin_reward` at 0.008 m / 0.07 s, with command speed above the moving-command threshold and `max_cycle_hz` initially near 7.5.
+   Do not rely on `apv%` alone; it must be paired with a forward-distance or cycle-root-advance floor so the policy cannot pass the gate while stepping in place.
 8. Keep walking-only support semantics: no meaningful flight phase, controlled support transitions, and root advance through supported steps. Cadence remains an anti-chatter guard, not the definition of walking.
 9. Reject standing, fake in-place stepping, edge-walk shuffling, and collapse/crawl movement even if some gait counters pass.
 10. Run 30 s playback and diagnostics before any gait continuation.
 
 The main principle is: with an authored pose, bootstrap should preserve good geometry, not relearn survival.
+
+## V2.5 Closure And V3 Restart Decision
+
+V2.5 is closed as a continuation strategy, not because it failed completely, but
+because its useful result and its failure mode are both now clear.
+
+Useful result:
+
+```text
+keeper evidence checkpoint = model_648.pt
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep
+```
+
+`model_648.pt` demonstrated that the authored reset pose can be used as a
+training start and that a scratch/posed-start policy can preserve height,
+straightness, `fsep`, and `ksep` while moving forward. It is the V2.5
+conservative seed and reproduction target.
+
+Failure mode:
+
+```text
+V2.5 learned to satisfy low-speed forward progress with tiny high-frequency steps.
+Later anti-shuffle continuations changed the live reward stack and often optimized the wrong proxy.
+```
+
+The later S4 branches should be treated as diagnostic evidence, not as a clean
+lineage to keep extending. The mistake was not the authored pose; the mistake
+was trying to turn a locally optimized shuffle into real walking by repeatedly
+adding small continuation gates.
+
+The V3 decision is:
+
+```text
+restart from iteration 0,
+keep the reward topology that produced model_648,
+do not inherit the later S4 gate stack,
+measure the exact 648-compatible recipe before hand-tuning child branches.
+```
+
+New parallel task:
+
+```text
+task = Isaac-KBot-Forward-Flat-V3-648HandTuned-v0
+env cfg = KBotForwardFlatV3HandTuned648EnvCfg
+parent code path = KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg
+PPO cfg = KBotForwardFlatConservativePPORunnerCfg
+resume = no, iteration 0
+reward weight overrides = explicit neutral block matching saved model_648 values
+```
+
+This keeps V1, V1 hybrid, V2.5 baseline, V2.5 S4 experiments, and V3 separated
+by task ID instead of allowing one live config to drift underneath old
+checkpoints.

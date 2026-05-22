@@ -266,12 +266,42 @@ gym.register(
 )
 
 gym.register(
+    id="Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality648Compat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatFineTunePPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterSuppression-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV25S42ChatterSuppressionEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatFineTunePPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterFrom648Compat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV25S42ChatterFrom648CompatEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatFineTunePPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Isaac-KBot-Forward-Flat-V3-648HandTuned-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env_cfg:KBotForwardFlatV3HandTuned648EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:KBotForwardFlatConservativePPORunnerCfg",
     },
 )
 

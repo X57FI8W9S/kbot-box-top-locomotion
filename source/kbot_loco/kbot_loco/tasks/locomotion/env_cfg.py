@@ -1286,6 +1286,59 @@ class KBotForwardFlatV25PoseGaitQualityEnvCfg(KBotForwardFlatV25ScratchPoseWidth
 
 
 @configclass
+class KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg(KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg):
+    """Frozen V2.5 pose-gait stack that produced the model_648 checkpoint.
+
+    This compatibility task intentionally excludes later S4 reward terms such
+    as valid-step gates, dense step progress, cadence penalties, and contact
+    chatter. Use it to replay or continue the 2026-05-09 model_648 lineage
+    without silently changing its training pipeline.
+    """
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.scene.robot.spawn.articulation_props = None
+        self.commands.base_velocity.ranges.lin_vel_x = (0.08, 0.16)
+
+        self.rewards.world_forward_velocity_clip.weight = 2.5
+        self.rewards.world_forward_velocity_clip.params["max_velocity"] = 0.12
+        self.rewards.action_rate_l2.weight = -0.09
+        self.rewards.dof_acc_l2.weight = -1.0e-7
+        self.rewards.wobble_joint_vel_l2.weight = -0.04
+        self.rewards.forward_velocity_below_l2.weight = -6.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.07
+        self.rewards.world_forward_velocity_below_l2.weight = -24.0
+        self.rewards.world_forward_velocity_below_l2.params["minimum_velocity"] = 0.05
+
+        self.rewards.feet_air_time.weight = 1.0
+        self.rewards.feet_air_time.params["threshold"] = 0.22
+        self.rewards.alternating_foot_phase.weight = 0.18
+        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.10
+        self.rewards.swing_foot_overtake_l1.weight = -3.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.08
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.20
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.04
+
+        self.rewards.root_lateral_position_l2 = RewTerm(func=mdp.root_lateral_position_l2, weight=-12.0)
+        self.rewards.lateral_velocity_l2.weight = -20.0
+        self.rewards.yaw_rate_l2.weight = -20.0
+        self.rewards.world_heading_l2.weight = -90.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = -9.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.28
+        self.rewards.foot_sole_lateral_lane_max_l1.weight = -44.0
+
+        self.rewards.foot_world_parallel_max_l2.weight = -0.8
+        self.rewards.foot_flat_l2.weight = -4.0
+        self.rewards.stance_foot_flat_l2.weight = -1.2
+        self.rewards.action_rate_l2.weight = -0.09
+        self.rewards.stand_joint_position_l2.weight = -0.5
+
+
+@configclass
 class KBotForwardFlatV25S42ChatterSuppressionEnvCfg(KBotForwardFlatV25PoseGaitQualityEnvCfg):
     """S4.2: suppress contact chatter from model_648 without training speed."""
 
@@ -1294,6 +1347,95 @@ class KBotForwardFlatV25S42ChatterSuppressionEnvCfg(KBotForwardFlatV25PoseGaitQu
 
         self.rewards.contact_chatter_l1.weight = -10.0
         self.rewards.contact_chatter_l1.params["min_air_time"] = 0.10
+
+
+@configclass
+class KBotForwardFlatV25S42ChatterFrom648CompatEnvCfg(KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg):
+    """S4.2 branch from the frozen model_648 stack with only chatter added."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.contact_chatter_l1 = RewTerm(
+            func=mdp.contact_chatter_l1,
+            weight=-10.0,
+            params={
+                "min_air_time": 0.10,
+                "command_name": "base_velocity",
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
+
+
+@configclass
+class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg):
+    """V3 scratch restart using the frozen model_648 reward topology.
+
+    V3 intentionally starts from the code path that trained the V2.5
+    `model_648.pt` seed, but as a fresh iteration-0 policy. It does not inherit
+    the later S4 step-gate/cadence/chatter reward terms. The explicit weight
+    assignments below intentionally match the 648-compatible baseline so this
+    task behaves the same until those numbers are hand-tuned.
+    """
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        # V3 tuning block. These values match the saved model_648 reward
+        # weights; edit only this block when making hand-tuned V3 branches.
+        self.rewards.track_lin_vel_xy_exp.weight = 4.0
+        self.rewards.track_ang_vel_z_exp.weight = 1.0
+        self.rewards.lin_vel_z_l2.weight = -2.0
+        self.rewards.ang_vel_xy_l2.weight = -0.25
+        self.rewards.dof_torques_l2.weight = -5.0e-5
+        self.rewards.dof_acc_l2.weight = -1.0e-7
+        self.rewards.action_rate_l2.weight = -0.09
+        self.rewards.feet_air_time.weight = 1.0
+        self.rewards.undesired_contacts.weight = -2.0
+        self.rewards.flat_orientation_l2.weight = -20.0
+        self.rewards.dof_pos_limits.weight = -2.0
+        self.rewards.alive.weight = 1.0
+        self.rewards.base_height_l2.weight = -35.0
+        self.rewards.alternating_foot_phase.weight = 0.18
+        self.rewards.lateral_velocity_l2.weight = -20.0
+        self.rewards.yaw_rate_l2.weight = -20.0
+        self.rewards.root_lateral_tilt_l2.weight = -50.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -120.0
+        self.rewards.world_heading_l2.weight = -90.0
+        self.rewards.backward_velocity_l2.weight = -2.0
+        self.rewards.forward_velocity_below_l2.weight = -6.0
+        self.rewards.foot_lateral_spacing_l1.weight = -9.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_lateral_lane_l1.weight = -4.0
+        self.rewards.foot_lateral_lane_max_l1.weight = -2.0
+        self.rewards.leg_frontal_plane_l1.weight = 0.0
+        self.rewards.left_leg_frontal_plane_l1.weight = -4.0
+        self.rewards.right_leg_frontal_plane_l1.weight = -4.0
+        self.rewards.max_leg_frontal_plane_l1.weight = -10.0
+        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.swing_foot_overtake_l1.weight = -3.0
+        self.rewards.foot_parallel_l2.weight = 0.0
+        self.rewards.foot_world_parallel_l2.weight = 0.0
+        self.rewards.foot_world_parallel_max_l2.weight = -0.8
+        self.rewards.foot_toe_in_l2.weight = 0.0
+        self.rewards.foot_flat_l2.weight = -4.0
+        self.rewards.stance_foot_flat_l2.weight = -1.2
+        self.rewards.wobble_joint_vel_l2.weight = -0.04
+        self.rewards.hip_roll_yaw_position_l2.weight = 0.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = 0.0
+        self.rewards.low_body_l2.weight = -120.0
+        self.rewards.knee_extension_l1.weight = 0.0
+        self.rewards.termination_penalty.weight = -250.0
+        self.rewards.upright_alive.weight = 8.0
+        self.rewards.foot_sole_lateral_lane_max_l1.weight = -44.0
+        self.rewards.leg_frontal_sole_plane_max_l1.weight = -14.0
+        self.rewards.hip_roll_position_ema_5cycle_l2.weight = 0.0
+        self.rewards.mirrored_joint_position_l2.weight = -3.0
+        self.rewards.centered_joint_target_position_l2.weight = 0.0
+        self.rewards.stand_joint_position_l2.weight = -0.5
+        self.rewards.world_forward_velocity_below_l2.weight = -24.0
+        self.rewards.world_forward_velocity_clip.weight = 2.5
+        self.rewards.root_lateral_position_l2.weight = -12.0
 
 
 @configclass
