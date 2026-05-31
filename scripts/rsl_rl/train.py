@@ -10,6 +10,17 @@ POLICY_ONLY_RESUME = "--policy_only_resume" in sys.argv
 if POLICY_ONLY_RESUME:
     sys.argv.remove("--policy_only_resume")
 
+SAVE_INTERVAL = None
+if "--save_interval" in sys.argv:
+    save_interval_index = sys.argv.index("--save_interval")
+    try:
+        SAVE_INTERVAL = int(sys.argv[save_interval_index + 1])
+    except (IndexError, ValueError) as exc:
+        raise ValueError("--save_interval requires a positive integer") from exc
+    if SAVE_INTERVAL <= 0:
+        raise ValueError("--save_interval requires a positive integer")
+    del sys.argv[save_interval_index : save_interval_index + 2]
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ISAACLAB_ROOT = REPO_ROOT / "isaac_lab" / "IsaacLab"
 ISAAC_RSL_RL_DIR = REPO_ROOT / "isaac_lab" / "IsaacLab" / "scripts" / "reinforcement_learning" / "rsl_rl"
@@ -40,6 +51,8 @@ def _update_rsl_rl_cfg_with_device(agent_cfg, args_cli):
     agent_cfg = _update_rsl_rl_cfg(agent_cfg, args_cli)
     if getattr(args_cli, "device", None) is not None:
         agent_cfg.device = args_cli.device
+    if SAVE_INTERVAL is not None:
+        agent_cfg.save_interval = SAVE_INTERVAL
     return agent_cfg
 
 

@@ -1383,7 +1383,11 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
 
         # V3 tuning block. These values match the saved model_648 reward
         # weights; edit only this block when making hand-tuned V3 branches.
-        self.rewards.track_lin_vel_xy_exp.weight = 4.0
+        self.commands.base_velocity.ranges.lin_vel_x = (0.75, 0.75)
+        self.rewards.track_lin_vel_xy_exp.func = mdp.upright_gated_track_lin_vel_xy_exp
+        self.rewards.track_lin_vel_xy_exp.params["minimum_height"] = 0.76
+        self.rewards.track_lin_vel_xy_exp.params["max_tilt"] = 0.45
+        self.rewards.track_lin_vel_xy_exp.weight = 30.0
         self.rewards.track_ang_vel_z_exp.weight = 1.0
         self.rewards.lin_vel_z_l2.weight = -2.0
         self.rewards.ang_vel_xy_l2.weight = -0.25
@@ -1413,19 +1417,20 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
         self.rewards.right_leg_frontal_plane_l1.weight = -4.0
         self.rewards.max_leg_frontal_plane_l1.weight = -10.0
         self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.60
         self.rewards.swing_foot_overtake_l1.weight = -3.0
         self.rewards.foot_parallel_l2.weight = 0.0
         self.rewards.foot_world_parallel_l2.weight = 0.0
         self.rewards.foot_world_parallel_max_l2.weight = -0.8
         self.rewards.foot_toe_in_l2.weight = 0.0
-        self.rewards.foot_flat_l2.weight = -4.0
+        self.rewards.foot_flat_l2.weight = 0.0
         self.rewards.stance_foot_flat_l2.weight = -1.2
         self.rewards.wobble_joint_vel_l2.weight = -0.04
         self.rewards.hip_roll_yaw_position_l2.weight = 0.0
         self.rewards.hip_roll_yaw_position_ema_l2.weight = 0.0
         self.rewards.low_body_l2.weight = -120.0
         self.rewards.knee_extension_l1.weight = 0.0
-        self.rewards.termination_penalty.weight = -250.0
+        self.rewards.termination_penalty.weight = -750.0
         self.rewards.upright_alive.weight = 8.0
         self.rewards.foot_sole_lateral_lane_max_l1.weight = -44.0
         self.rewards.leg_frontal_sole_plane_max_l1.weight = -14.0
@@ -1434,8 +1439,32 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
         self.rewards.centered_joint_target_position_l2.weight = 0.0
         self.rewards.stand_joint_position_l2.weight = -0.5
         self.rewards.world_forward_velocity_below_l2.weight = -24.0
-        self.rewards.world_forward_velocity_clip.weight = 2.5
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.07
+        self.rewards.world_forward_velocity_below_l2.params["minimum_velocity"] = 0.05
+        self.rewards.world_forward_velocity_clip.func = mdp.upright_gated_world_forward_velocity_clip
+        self.rewards.world_forward_velocity_clip.params["minimum_height"] = 0.76
+        self.rewards.world_forward_velocity_clip.params["max_tilt"] = 0.45
+        self.rewards.world_forward_velocity_clip.weight = 30
+        self.rewards.world_forward_velocity_clip.params["max_velocity"] = 0.75
         self.rewards.root_lateral_position_l2.weight = -12.0
+        self.rewards.swing_sole_clearance = RewTerm(
+            func=mdp.swing_sole_clearance_reward,
+            weight=1.0,
+            params={
+                "command_name": "base_velocity",
+                "target_height": 0.010,
+                "drag_floor": 0.002,
+                "drag_weight": 3.0,
+                "minimum_height": 0.76,
+                "max_tilt": 0.45,
+                "foot_local_offsets": [
+                    (0.03, -0.036528655, -0.0194786795),
+                    (0.03, -0.036528755, -0.0234786545),
+                ],
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+            },
+        )
 
 
 @configclass

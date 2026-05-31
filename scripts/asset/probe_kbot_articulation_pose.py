@@ -96,6 +96,11 @@ parser.add_argument("--enable-self-collisions", action="store_true", help="Enabl
 parser.add_argument("--task-articulation-props", action="store_true", help="Use task solver iteration counts with self-collisions disabled.")
 parser.add_argument("--task-rigid-props", action="store_true", help="Use the locomotion task rigid body properties only.")
 parser.add_argument(
+    "--report-sole-clearance",
+    action="store_true",
+    help="Report raw signed sole-center height above the ground plane without clipping.",
+)
+parser.add_argument(
     "--preserve-root-orientation",
     action="store_true",
     help="Keep the USD-authored floating-base orientation instead of resetting it to identity.",
@@ -110,6 +115,7 @@ import isaaclab.sim as sim_utils  # noqa: E402
 import torch  # noqa: E402
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg  # noqa: E402
 from isaaclab.assets import Articulation, ArticulationCfg  # noqa: E402
+from isaaclab.utils.math import quat_apply  # noqa: E402
 
 
 def _quat_from_xyz_euler_deg(roll_deg: float, pitch_deg: float, yaw_deg: float, device: str) -> torch.Tensor:
@@ -278,6 +284,20 @@ def _set_hand_pose(robot: Articulation, device: str) -> torch.Tensor:
     return target_joint_pos
 
 
+def _raw_signed_sole_clearance(robot: Articulation) -> list[float]:
+    body_names = list(robot.body_names)
+    foot_body_ids = [body_names.index("foot1"), body_names.index("foot3")]
+    offsets = torch.tensor(
+        [(0.03, -0.036528655, -0.0194786795), (0.03, -0.036528755, -0.0234786545)],
+        dtype=robot.data.body_pos_w.dtype,
+        device=robot.data.body_pos_w.device,
+    )
+    foot_pos_w = robot.data.body_pos_w[0, foot_body_ids]
+    foot_quat_w = robot.data.body_quat_w[0, foot_body_ids]
+    sole_pos_w = foot_pos_w + quat_apply(foot_quat_w, offsets)
+    return [float(value) for value in sole_pos_w[:, 2].tolist()]
+
+
 def main() -> None:
     usd_path = args.usd_path.resolve()
     if not usd_path.exists():
@@ -307,6 +327,7 @@ def main() -> None:
 
     heights = [float(robot.data.root_pos_w[0, 2].item())]
     tilt_proxy = [0.0]
+    sole_clearances = [_raw_signed_sole_clearance(robot)] if args.report_sole_clearance else []
     for _ in range(args.steps):
         if args.hold_target:
             robot.set_joint_position_target(target_joint_pos)
@@ -318,6 +339,8 @@ def main() -> None:
         heights.append(float(robot.data.root_pos_w[0, 2].item()))
         gravity = robot.data.projected_gravity_b[0]
         tilt_proxy.append(max(abs(float(gravity[0].item())), abs(float(gravity[1].item()))))
+        if args.report_sole_clearance:
+            sole_clearances.append(_raw_signed_sole_clearance(robot))
 
     body_z = dict(zip(robot.body_names, [round(float(v), 4) for v in robot.data.body_pos_w[0, :, 2].tolist()]))
     body_xyz = {
@@ -340,6 +363,17 @@ def main() -> None:
         [round(float(v), 4) for v in robot.data.joint_pos[0].tolist()],
         flush=True,
     )
+    if args.report_sole_clearance:
+        print(
+            "ARTICULATION raw_signed_sole_clearance_m=",
+            {
+                "initial": [round(value, 6) for value in sole_clearances[0]],
+                "final": [round(value, 6) for value in sole_clearances[-1]],
+                "min": [round(min(values), 6) for values in zip(*sole_clearances)],
+                "max": [round(max(values), 6) for values in zip(*sole_clearances)],
+            },
+            flush=True,
+        )
     if args.hold_open:
         while simulation_app.is_running():
             sim.step(render=not args.headless)

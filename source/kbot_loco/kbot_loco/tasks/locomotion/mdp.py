@@ -139,6 +139,99 @@ def world_forward_velocity_clip(
     return torch.clamp(root_lin_vel_w[:, 0] / max(max_velocity, 1.0e-6), min=0.0, max=1.0)
 
 
+def _upright_health_gate(
+    env: ManagerBasedRLEnv,
+    minimum_height: float,
+    max_tilt: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return one only while the root is tall and reasonably upright."""
+    asset = env.scene[asset_cfg.name]
+    height_ok = asset.data.root_pos_w[:, 2] > minimum_height
+    tilt = torch.linalg.norm(asset.data.projected_gravity_b[:, :2], dim=1)
+    return (height_ok & (tilt < max_tilt)).float()
+
+
+def upright_gated_track_lin_vel_xy_exp(
+    env: ManagerBasedRLEnv,
+    std: float,
+    command_name: str,
+    minimum_height: float,
+    max_tilt: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward commanded body-frame velocity tracking only while upright."""
+    asset = env.scene[asset_cfg.name]
+    lin_vel_error = torch.sum(
+        torch.square(env.command_manager.get_command(command_name)[:, :2] - asset.data.root_lin_vel_b[:, :2]),
+        dim=1,
+    )
+    return torch.exp(-lin_vel_error / std**2) * _upright_health_gate(env, minimum_height, max_tilt, asset_cfg)
+
+
+def upright_gated_world_forward_velocity_clip(
+    env: ManagerBasedRLEnv,
+    max_velocity: float,
+    minimum_height: float,
+    max_tilt: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward clipped world +X progress only while upright."""
+    return world_forward_velocity_clip(env, max_velocity, asset_cfg) * _upright_health_gate(
+        env, minimum_height, max_tilt, asset_cfg
+    )
+
+
+def swing_sole_clearance_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_height: float,
+    drag_floor: float,
+    drag_weight: float,
+    minimum_height: float,
+    max_tilt: float,
+    foot_local_offsets: list[tuple[float, float, float]],
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Reward newly reached swing clearance and penalize dragging during single support."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    offsets = torch.tensor(foot_local_offsets, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+    sole_pos_w = foot_pos_w + quat_apply(foot_quat_w, offsets.unsqueeze(0).expand(env.num_envs, -1, -1))
+    sole_height = sole_pos_w[:, :, 2]
+    env_origins = getattr(env.scene, "env_origins", None)
+    if env_origins is not None:
+        sole_height = sole_height - env_origins[:, None, 2]
+
+    left_swing = ~in_contact[:, 0] & in_contact[:, 1]
+    right_swing = ~in_contact[:, 1] & in_contact[:, 0]
+    single_support_swing = torch.stack((left_swing, right_swing), dim=1)
+    moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
+    upright = _upright_health_gate(env, minimum_height, max_tilt, asset_cfg)
+
+    max_height_name = "_kbot_swing_sole_clearance_max"
+    previous_max = getattr(env, max_height_name, None)
+    if previous_max is None or previous_max.shape != sole_height.shape or previous_max.device != sole_height.device:
+        previous_max = torch.zeros_like(sole_height)
+    previous_max = torch.where(in_contact, torch.zeros_like(previous_max), previous_max)
+
+    capped_height = torch.clamp(sole_height, min=0.0, max=target_height)
+    clearance_reward = torch.clamp(capped_height - previous_max, min=0.0) / max(target_height, 1.0e-6)
+    updated_max = torch.maximum(previous_max, capped_height)
+    setattr(env, max_height_name, updated_max)
+
+    drag_penalty = drag_weight * torch.clamp(drag_floor - sole_height, min=0.0) / max(drag_floor, 1.0e-6)
+
+    active = single_support_swing & moving[:, None] & (upright[:, None] > 0.0)
+    return torch.sum((clearance_reward - drag_penalty) * active.float(), dim=1)
+
+
 def walking_cycle_cadence_above_l2(
     env: ManagerBasedRLEnv,
     max_cycle_hz: float,
