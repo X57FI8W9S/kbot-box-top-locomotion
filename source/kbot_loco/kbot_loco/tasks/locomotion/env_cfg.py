@@ -461,19 +461,6 @@ class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
             weight=-90.0,
             params={"tau_s": 5.0, "asset_cfg": SceneEntityCfg("robot", joint_names=[".*hip_roll.*"])},
         )
-        self.rewards.mirrored_joint_position_l2 = RewTerm(
-            func=mdp.mirrored_joint_position_l2,
-            weight=-3.0,
-            params={
-                "joint_pairs": [
-                    ("left_hip_pitch_04", "right_hip_pitch_04", 1.0),
-                    ("left_hip_roll_03", "right_hip_roll_03", -1.0),
-                    ("left_hip_yaw_03", "right_hip_yaw_03", -1.0),
-                    ("left_knee_04", "right_knee_04", -1.0),
-                    ("left_ankle_02", "right_ankle_02", -1.0),
-                ],
-            },
-        )
         self.rewards.centered_joint_target_position_l2 = RewTerm(
             func=mdp.joint_target_position_l2,
             weight=-0.5,
@@ -1387,7 +1374,7 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
         self.rewards.track_lin_vel_xy_exp.func = mdp.upright_gated_track_lin_vel_xy_exp
         self.rewards.track_lin_vel_xy_exp.params["minimum_height"] = 0.76
         self.rewards.track_lin_vel_xy_exp.params["max_tilt"] = 0.45
-        self.rewards.track_lin_vel_xy_exp.weight = 30.0
+        self.rewards.track_lin_vel_xy_exp.weight = 15.0
         self.rewards.track_ang_vel_z_exp.weight = 1.0
         self.rewards.lin_vel_z_l2.weight = -2.0
         self.rewards.ang_vel_xy_l2.weight = -0.25
@@ -1403,23 +1390,38 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
         self.rewards.alternating_foot_phase.weight = 0.18
         self.rewards.lateral_velocity_l2.weight = -20.0
         self.rewards.yaw_rate_l2.weight = -20.0
-        self.rewards.root_lateral_tilt_l2.weight = -50.0
-        self.rewards.root_lateral_tilt_ema_l2.weight = -120.0
+        self.rewards.root_lateral_tilt_l2.weight = -90.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -12000.0
+        self.rewards.signed_joint_pair_ema_symmetry_l2 = RewTerm(
+            func=mdp.signed_joint_pair_ema_symmetry_l2,
+            weight=-90.0,
+            params={
+                "tau_s": 1.0,
+                "joint_pairs": [
+                    ("left_hip_pitch_04", "right_hip_pitch_04", -1.0),
+                    ("left_hip_roll_03", "right_hip_roll_03", -1.0),
+                    ("left_hip_yaw_03", "right_hip_yaw_03", -1.0),
+                    ("left_knee_04", "right_knee_04", -1.0),
+                    ("left_ankle_02", "right_ankle_02", -1.0),
+                ],
+            },
+        )
         self.rewards.world_heading_l2.weight = -90.0
         self.rewards.backward_velocity_l2.weight = -2.0
         self.rewards.forward_velocity_below_l2.weight = -6.0
-        self.rewards.foot_lateral_spacing_l1.weight = -9.0
-        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_lateral_spacing_l1.weight = -30.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -24.0
         self.rewards.foot_lateral_lane_l1.weight = -4.0
         self.rewards.foot_lateral_lane_max_l1.weight = -2.0
         self.rewards.leg_frontal_plane_l1.weight = 0.0
         self.rewards.left_leg_frontal_plane_l1.weight = -4.0
         self.rewards.right_leg_frontal_plane_l1.weight = -4.0
         self.rewards.max_leg_frontal_plane_l1.weight = -10.0
-        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.foot_sagittal_separation_l1.weight = -12.0
         self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.60
-        self.rewards.swing_foot_overtake_l1.weight = -3.0
-        self.rewards.foot_parallel_l2.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = -150.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.30
+        self.rewards.foot_parallel_l2.weight = -30.0
         self.rewards.foot_world_parallel_l2.weight = 0.0
         self.rewards.foot_world_parallel_max_l2.weight = -0.8
         self.rewards.foot_toe_in_l2.weight = 0.0
@@ -1432,21 +1434,39 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
         self.rewards.knee_extension_l1.weight = 0.0
         self.rewards.termination_penalty.weight = -750.0
         self.rewards.upright_alive.weight = 8.0
-        self.rewards.foot_sole_lateral_lane_max_l1.weight = -44.0
+        self.rewards.foot_sole_lateral_lane_max_l1.weight = -100.0
         self.rewards.leg_frontal_sole_plane_max_l1.weight = -14.0
         self.rewards.hip_roll_position_ema_5cycle_l2.weight = 0.0
-        self.rewards.mirrored_joint_position_l2.weight = -3.0
         self.rewards.centered_joint_target_position_l2.weight = 0.0
-        self.rewards.stand_joint_position_l2.weight = -0.5
+        self.rewards.stand_joint_position_l2.weight = -1.0
         self.rewards.world_forward_velocity_below_l2.weight = -24.0
         self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.07
         self.rewards.world_forward_velocity_below_l2.params["minimum_velocity"] = 0.05
         self.rewards.world_forward_velocity_clip.func = mdp.upright_gated_world_forward_velocity_clip
         self.rewards.world_forward_velocity_clip.params["minimum_height"] = 0.76
         self.rewards.world_forward_velocity_clip.params["max_tilt"] = 0.45
-        self.rewards.world_forward_velocity_clip.weight = 30
+        self.rewards.world_forward_velocity_clip.weight = 15
         self.rewards.world_forward_velocity_clip.params["max_velocity"] = 0.75
-        self.rewards.root_lateral_position_l2.weight = -12.0
+        self.rewards.root_lateral_position_l2.weight = -200.0
+        self.rewards.lateral_away_from_center_l2 = RewTerm(func=mdp.lateral_away_from_center_l2, weight=-600.0)
+        self.rewards.contact_duty_symmetry_l2 = RewTerm(
+            func=mdp.contact_duty_symmetry_l2,
+            weight=-10.0,
+            params={
+                "tau_s": 1.0,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
+        self.rewards.alternating_step_symmetry_l2 = RewTerm(
+            func=mdp.alternating_step_symmetry_l2,
+            weight=-8.0,
+            params={
+                "tau_s": 1.0,
+                "advance_scale": 0.08,
+                "duration_scale": 0.20,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
         self.rewards.swing_sole_clearance = RewTerm(
             func=mdp.swing_sole_clearance_reward,
             weight=1.0,

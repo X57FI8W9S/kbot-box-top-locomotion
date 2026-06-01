@@ -60,6 +60,21 @@ def root_lateral_position_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg =
     return torch.square(lateral_pos)
 
 
+def lateral_away_from_center_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize world-frame lateral velocity only when it moves farther from center."""
+    asset = env.scene[asset_cfg.name]
+    env_origins = getattr(env.scene, "env_origins", None)
+    if env_origins is None:
+        lateral_pos = asset.data.root_pos_w[:, 1]
+    else:
+        lateral_pos = asset.data.root_pos_w[:, 1] - env_origins[:, 1]
+    away_speed = torch.clamp(lateral_pos * asset.data.root_lin_vel_w[:, 1], min=0.0)
+    return torch.square(away_speed)
+
+
 def yaw_rate_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize body-frame yaw rate for straight-line walking."""
     asset = env.scene[asset_cfg.name]
@@ -90,6 +105,37 @@ def root_lateral_tilt_ema_l2(
     ema = torch.where(reset, tilt, (1.0 - alpha) * ema + alpha * tilt)
     setattr(env, buffer_name, ema)
     return torch.square(ema)
+
+
+def signed_joint_pair_ema_symmetry_l2(
+    env: ManagerBasedRLEnv,
+    joint_pairs: list[tuple[str, str, float]],
+    tau_s: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize persistent left/right joint-pair bias after sign normalization."""
+    asset = env.scene[asset_cfg.name]
+    name_to_id = {name: index for index, name in enumerate(asset.data.joint_names)}
+    pair_errors = []
+    for left_name, right_name, mirror_sign in joint_pairs:
+        left_id = name_to_id[left_name]
+        right_id = name_to_id[right_name]
+        pair_errors.append(asset.data.joint_pos[:, left_id] - mirror_sign * asset.data.joint_pos[:, right_id])
+
+    if not pair_errors:
+        return torch.zeros(env.num_envs, dtype=asset.data.joint_pos.dtype, device=asset.data.joint_pos.device)
+
+    error = torch.stack(pair_errors, dim=1)
+    buffer_name = "_kbot_signed_joint_pair_symmetry_ema"
+    ema = getattr(env, buffer_name, None)
+    if ema is None or ema.shape != error.shape or ema.device != error.device:
+        ema = torch.zeros_like(error)
+
+    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    reset = (env.episode_length_buf <= 1).unsqueeze(1)
+    ema = torch.where(reset, error, (1.0 - alpha) * ema + alpha * error)
+    setattr(env, buffer_name, ema)
+    return torch.sum(torch.square(ema), dim=1)
 
 
 def world_heading_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -445,6 +491,111 @@ def dense_single_support_step_progress_reward(
     moving = torch.norm(command[:, :2], dim=1) > 0.05
     setattr(env, last_root_name, last_root)
     return progress * single_support.float() * moving.float()
+
+
+def contact_duty_symmetry_l2(
+    env: ManagerBasedRLEnv,
+    tau_s: float,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Penalize persistent left/right stance-duty imbalance."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    contact = (contact_time > 0.0).float()
+
+    buffer_name = "_kbot_contact_duty_symmetry_ema"
+    ema = getattr(env, buffer_name, None)
+    if ema is None or ema.shape != contact.shape or ema.device != contact.device:
+        ema = torch.zeros_like(contact)
+
+    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    reset = (env.episode_length_buf <= 1).unsqueeze(1)
+    ema = torch.where(reset, contact, (1.0 - alpha) * ema + alpha * contact)
+    setattr(env, buffer_name, ema)
+    return torch.square(ema[:, 0] - ema[:, 1])
+
+
+def alternating_step_symmetry_l2(
+    env: ManagerBasedRLEnv,
+    tau_s: float,
+    advance_scale: float,
+    duration_scale: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize persistent left/right alternating-step advance and timing imbalance."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    root_x = asset.data.root_pos_w[:, 0]
+    current_time = env.episode_length_buf.to(root_x.dtype) * env.step_dt
+
+    last_root_name = "_kbot_step_symmetry_touchdown_root_x"
+    last_time_name = "_kbot_step_symmetry_touchdown_time"
+    last_foot_name = "_kbot_step_symmetry_touchdown_foot"
+    advance_ema_name = "_kbot_step_symmetry_advance_ema"
+    duration_ema_name = "_kbot_step_symmetry_duration_ema"
+    seen_name = "_kbot_step_symmetry_seen"
+
+    last_root = getattr(env, last_root_name, None)
+    last_time = getattr(env, last_time_name, None)
+    last_foot = getattr(env, last_foot_name, None)
+    advance_ema = getattr(env, advance_ema_name, None)
+    duration_ema = getattr(env, duration_ema_name, None)
+    seen = getattr(env, seen_name, None)
+
+    if last_root is None or last_root.shape != root_x.shape or last_root.device != root_x.device:
+        last_root = root_x.clone()
+    if last_time is None or last_time.shape != root_x.shape or last_time.device != root_x.device:
+        last_time = current_time.clone()
+    if last_foot is None or last_foot.shape != root_x.shape or last_foot.device != root_x.device:
+        last_foot = torch.full((env.num_envs,), -1, dtype=torch.long, device=root_x.device)
+    if advance_ema is None or advance_ema.shape != first_contact.shape or advance_ema.device != root_x.device:
+        advance_ema = torch.zeros(env.num_envs, first_contact.shape[1], dtype=root_x.dtype, device=root_x.device)
+    if duration_ema is None or duration_ema.shape != first_contact.shape or duration_ema.device != root_x.device:
+        duration_ema = torch.zeros(env.num_envs, first_contact.shape[1], dtype=root_x.dtype, device=root_x.device)
+    if seen is None or seen.shape != first_contact.shape or seen.device != root_x.device:
+        seen = torch.zeros(env.num_envs, first_contact.shape[1], dtype=torch.bool, device=root_x.device)
+
+    reset = env.episode_length_buf <= 1
+    last_root = torch.where(reset, root_x, last_root)
+    last_time = torch.where(reset, current_time, last_time)
+    last_foot = torch.where(reset, torch.full_like(last_foot, -1), last_foot)
+    advance_ema = torch.where(reset[:, None], torch.zeros_like(advance_ema), advance_ema)
+    duration_ema = torch.where(reset[:, None], torch.zeros_like(duration_ema), duration_ema)
+    seen = torch.where(reset[:, None], torch.zeros_like(seen), seen)
+
+    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    for foot_i in range(first_contact.shape[1]):
+        touchdown = first_contact[:, foot_i]
+        alternating = (last_foot >= 0) & (last_foot != foot_i)
+        valid_event = touchdown & alternating
+
+        advance = torch.clamp(root_x - last_root, min=0.0)
+        duration = torch.clamp(current_time - last_time, min=0.0)
+        prior_seen = seen[:, foot_i]
+        new_advance = torch.where(prior_seen, (1.0 - alpha) * advance_ema[:, foot_i] + alpha * advance, advance)
+        new_duration = torch.where(prior_seen, (1.0 - alpha) * duration_ema[:, foot_i] + alpha * duration, duration)
+        advance_ema[:, foot_i] = torch.where(valid_event, new_advance, advance_ema[:, foot_i])
+        duration_ema[:, foot_i] = torch.where(valid_event, new_duration, duration_ema[:, foot_i])
+        seen[:, foot_i] = seen[:, foot_i] | valid_event
+
+        last_root = torch.where(touchdown, root_x, last_root)
+        last_time = torch.where(touchdown, current_time, last_time)
+        last_foot = torch.where(touchdown, torch.full_like(last_foot, foot_i), last_foot)
+
+    both_seen = seen[:, 0] & seen[:, 1]
+    advance_error = (advance_ema[:, 0] - advance_ema[:, 1]) / max(advance_scale, 1.0e-6)
+    duration_error = (duration_ema[:, 0] - duration_ema[:, 1]) / max(duration_scale, 1.0e-6)
+    penalty = torch.square(advance_error) + torch.square(duration_error)
+
+    setattr(env, last_root_name, last_root)
+    setattr(env, last_time_name, last_time)
+    setattr(env, last_foot_name, last_foot)
+    setattr(env, advance_ema_name, advance_ema)
+    setattr(env, duration_ema_name, duration_ema)
+    setattr(env, seen_name, seen)
+    return penalty * both_seen.float()
 
 
 def supported_forward_velocity_reward(
@@ -979,24 +1130,6 @@ def joint_position_l2(
     joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
     default_joint_pos = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
     return torch.sum(torch.square(joint_pos - default_joint_pos), dim=1)
-
-
-def mirrored_joint_position_l2(
-    env: ManagerBasedRLEnv,
-    joint_pairs: list[tuple[str, str, float]],
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Penalize persistent left/right joint asymmetry after mirror-sign normalization."""
-    asset = env.scene[asset_cfg.name]
-    name_to_id = {name: index for index, name in enumerate(asset.data.joint_names)}
-    penalty = torch.zeros(env.num_envs, dtype=asset.data.joint_pos.dtype, device=asset.data.joint_pos.device)
-    for left_name, right_name, mirror_sign in joint_pairs:
-        left_id = name_to_id[left_name]
-        right_id = name_to_id[right_name]
-        left_error = asset.data.joint_pos[:, left_id] - asset.data.default_joint_pos[:, left_id]
-        right_error = asset.data.joint_pos[:, right_id] - asset.data.default_joint_pos[:, right_id]
-        penalty += torch.square(left_error - mirror_sign * right_error)
-    return penalty
 
 
 def joint_target_position_l2(
