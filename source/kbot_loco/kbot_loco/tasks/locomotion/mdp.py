@@ -1196,6 +1196,7 @@ def foot_sagittal_separation_l1(
     env: ManagerBasedRLEnv,
     target_length: float,
     sensor_cfg: SceneEntityCfg,
+    first_target_fraction: float = 1.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
 ) -> torch.Tensor:
     """Penalize short fore-aft foot separation during single-stance walking steps."""
@@ -1209,8 +1210,44 @@ def foot_sagittal_separation_l1(
     )
     step_length = torch.abs(feet_pos_b[:, 0, 0] - feet_pos_b[:, 1, 0])
     contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
-    single_stance = torch.sum((contact_time > 0.0).int(), dim=1) == 1
-    return torch.clamp(target_length - step_length, min=0.0) * single_stance
+    in_contact = contact_time > 0.0
+    single_stance = torch.sum(in_contact.int(), dim=1) == 1
+
+    previous_contact_name = "_kbot_foot_sagittal_previous_contact"
+    has_takeoff_name = "_kbot_foot_sagittal_has_takeoff"
+    first_target_done_name = "_kbot_foot_sagittal_first_target_done"
+    previous_contact = getattr(env, previous_contact_name, None)
+    has_takeoff = getattr(env, has_takeoff_name, None)
+    first_target_done = getattr(env, first_target_done_name, None)
+    if previous_contact is None or previous_contact.shape != in_contact.shape or previous_contact.device != in_contact.device:
+        previous_contact = in_contact.clone()
+    if has_takeoff is None or has_takeoff.shape != in_contact.shape or has_takeoff.device != in_contact.device:
+        has_takeoff = torch.zeros_like(in_contact)
+    if first_target_done is None or first_target_done.shape != env.episode_length_buf.shape or first_target_done.device != in_contact.device:
+        first_target_done = torch.zeros(env.num_envs, dtype=torch.bool, device=in_contact.device)
+
+    reset = (env.episode_length_buf <= 1).unsqueeze(1)
+    previous_contact = torch.where(reset, in_contact, previous_contact)
+    has_takeoff = torch.where(reset, torch.zeros_like(has_takeoff), has_takeoff)
+    first_target_done = torch.where(reset.squeeze(1), torch.zeros_like(first_target_done), first_target_done)
+
+    takeoff = previous_contact & ~in_contact
+    has_takeoff = torch.where(takeoff, torch.ones_like(has_takeoff), has_takeoff)
+    first_length = target_length * min(max(first_target_fraction, 0.0), 1.0)
+    active_target = torch.where(
+        first_target_done,
+        torch.full_like(step_length, target_length),
+        torch.full_like(step_length, first_length),
+    )
+    penalty = torch.clamp(active_target - step_length, min=0.0) * single_stance
+
+    touchdown = in_contact & has_takeoff
+    first_target_done = first_target_done | torch.any(touchdown, dim=1)
+    has_takeoff = torch.where(in_contact, torch.zeros_like(has_takeoff), has_takeoff)
+    setattr(env, previous_contact_name, in_contact)
+    setattr(env, has_takeoff_name, has_takeoff)
+    setattr(env, first_target_done_name, first_target_done)
+    return penalty
 
 
 def swing_foot_overtake_l1(
@@ -1311,78 +1348,121 @@ def dense_foot_swing_speed_reward(
     env: ManagerBasedRLEnv,
     command_name: str,
     target_length: float,
-    swing_phase_fraction: float,
+    target_air_time: float,
     max_step_credit: float,
+    target_left_y: float,
+    target_right_y: float,
+    y_scale: float,
+    y_linear_radius: float,
+    min_height: float,
+    max_height: float,
+    z_scale: float,
+    minimum_height: float,
+    max_tilt: float,
+    foot_local_offsets: list[tuple[float, float, float]],
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
 ) -> torch.Tensor:
-    """Water-level dense foot swing speed reward; pays only for new forward swing lead."""
-    signed_lead, swing_mask, _ = _signed_swing_step_lead(env, sensor_cfg, asset_cfg)
+    """Dense swing-foot speed reward gated by sole track and low clearance."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    _signed_lead, swing_mask, _ = _signed_swing_step_lead(env, sensor_cfg, asset_cfg)
     command = env.command_manager.get_command(command_name)
     moving = torch.norm(command[:, :2], dim=1) > 0.05
-    cmd_vx = torch.clamp(command[:, 0], min=0.0)
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    foot_vx_w = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, 0]
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    offsets = torch.tensor(foot_local_offsets, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+    sole_pos_w = foot_pos_w + quat_apply(foot_quat_w, offsets.unsqueeze(0).expand(env.num_envs, -1, -1))
 
-    target = max(target_length, 1.0e-6)
-    lead = torch.clamp(signed_lead, min=0.0, max=target)
-    best_name = "_kbot_dense_foot_swing_speed_best_lead"
-    best_lead = getattr(env, best_name, None)
-    if best_lead is None or best_lead.shape != lead.shape or best_lead.device != lead.device:
-        best_lead = torch.zeros_like(lead)
+    env_origins = getattr(env.scene, "env_origins", None)
+    if env_origins is None:
+        origin_y = torch.zeros(env.num_envs, dtype=sole_pos_w.dtype, device=sole_pos_w.device)
+        origin_z = torch.zeros(env.num_envs, dtype=sole_pos_w.dtype, device=sole_pos_w.device)
+    else:
+        origin_y = env_origins[:, 1].to(dtype=sole_pos_w.dtype, device=sole_pos_w.device)
+        origin_z = env_origins[:, 2].to(dtype=sole_pos_w.dtype, device=sole_pos_w.device)
 
+    target_y = torch.stack((origin_y + target_left_y, origin_y + target_right_y), dim=1)
+    y_error = torch.abs(sole_pos_w[:, :, 1] - target_y)
+    y_exp_score = torch.exp(-torch.square(y_error / max(y_scale, 1.0e-6)))
+    y_linear_score = torch.clamp(1.0 - y_error / max(y_linear_radius, 1.0e-6), min=0.0, max=1.0)
+    y_score = torch.maximum(y_exp_score, y_linear_score)
+
+    sole_height = sole_pos_w[:, :, 2] - origin_z.unsqueeze(1)
+    z_error = torch.clamp(min_height - sole_height, min=0.0) + torch.clamp(sole_height - max_height, min=0.0)
+    z_score = torch.exp(-torch.square(z_error / max(z_scale, 1.0e-6)))
+
+    watermark_name = "_kbot_dense_foot_swing_speed_wm_vx"
+    wm_vx = getattr(env, watermark_name, None)
+    if wm_vx is None or wm_vx.shape != foot_vx_w.shape or wm_vx.device != foot_vx_w.device:
+        wm_vx = torch.zeros_like(foot_vx_w)
+
+    target_swing_time = max(target_air_time, 1.0e-6)
+    target_avg_speed = max(target_length / (0.5 * target_swing_time), 1.0e-6)
     reset = (env.episode_length_buf <= 1).unsqueeze(1)
-    active = swing_mask & ~reset
-    best_lead = torch.where(active, best_lead, torch.zeros_like(best_lead))
-    new_progress = torch.clamp(lead - best_lead, min=0.0) * active.float()
+    early_swing = air_time <= (0.5 * target_swing_time)
+    upright = _upright_health_gate(env, minimum_height, max_tilt, asset_cfg)
+    active = swing_mask & early_swing & ~reset & (upright[:, None] > 0.0)
 
-    phase_fraction = max(swing_phase_fraction, 1.0e-6)
-    target_progress = torch.clamp(cmd_vx * env.step_dt / phase_fraction, min=1.0e-4).unsqueeze(1)
-    credit = torch.clamp(new_progress / target_progress, min=0.0, max=max_step_credit)
-    reward = torch.sum(credit, dim=1) * moving.float()
+    current_vx = torch.clamp(foot_vx_w, min=0.0)
+    wm_vx = torch.where(active, torch.maximum(wm_vx, current_vx), torch.zeros_like(wm_vx))
+    credit = torch.clamp(wm_vx / target_avg_speed, min=0.0, max=max_step_credit)
+    reward = torch.sum(credit * y_score * z_score * active.float(), dim=1) * moving.float()
 
-    best_lead = torch.where(active, torch.maximum(best_lead, lead), torch.zeros_like(best_lead))
-    setattr(env, best_name, best_lead)
+    setattr(env, watermark_name, wm_vx)
     return reward
 
 
-def stance_foot_retreat_l1(
+def foot_retreat(
     env: ManagerBasedRLEnv,
     retreat_epsilon: float,
     command_name: str,
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
 ) -> torch.Tensor:
-    """One-shot penalty when a contacted foot retreats behind its touchdown x."""
+    """One-shot penalty when a contacted foot falls behind its max airborne x."""
     asset = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
     contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
     in_contact = contact_time > 0.0
+    in_air = ~in_contact
     foot_x = asset.data.body_pos_w[:, asset_cfg.body_ids, 0]
 
-    touchdown_x_name = "_kbot_stance_retreat_touchdown_x"
-    retreat_seen_name = "_kbot_stance_retreat_seen"
-    touchdown_x = getattr(env, touchdown_x_name, None)
+    air_peak_x_name = "_kbot_foot_retreat_air_peak_x"
+    stance_anchor_x_name = "_kbot_foot_retreat_stance_anchor_x"
+    retreat_seen_name = "_kbot_foot_retreat_seen"
+    air_peak_x = getattr(env, air_peak_x_name, None)
+    stance_anchor_x = getattr(env, stance_anchor_x_name, None)
     retreat_seen = getattr(env, retreat_seen_name, None)
-    if touchdown_x is None or touchdown_x.shape != foot_x.shape or touchdown_x.device != foot_x.device:
-        touchdown_x = foot_x.clone()
+    if air_peak_x is None or air_peak_x.shape != foot_x.shape or air_peak_x.device != foot_x.device:
+        air_peak_x = foot_x.clone()
+    if stance_anchor_x is None or stance_anchor_x.shape != foot_x.shape or stance_anchor_x.device != foot_x.device:
+        stance_anchor_x = foot_x.clone()
     if retreat_seen is None or retreat_seen.shape != in_contact.shape or retreat_seen.device != in_contact.device:
         retreat_seen = torch.zeros_like(in_contact)
 
     reset = (env.episode_length_buf <= 1).unsqueeze(1)
-    touchdown_x = torch.where(reset, foot_x, touchdown_x)
+    air_peak_x = torch.where(reset, foot_x, air_peak_x)
+    stance_anchor_x = torch.where(reset, foot_x, stance_anchor_x)
     retreat_seen = torch.where(reset, torch.zeros_like(retreat_seen), retreat_seen)
 
-    touchdown_x = torch.where(first_contact, foot_x, touchdown_x)
+    active_air_peak_x = torch.where(in_air, torch.maximum(air_peak_x, foot_x), air_peak_x)
+    stance_anchor_x = torch.where(first_contact, active_air_peak_x, stance_anchor_x)
     retreat_seen = torch.where(first_contact | ~in_contact, torch.zeros_like(retreat_seen), retreat_seen)
 
-    retreated = in_contact & ~retreat_seen & (foot_x < (touchdown_x - retreat_epsilon))
+    retreated = in_contact & ~retreat_seen & (foot_x < (stance_anchor_x - retreat_epsilon))
     penalty = torch.sum(retreated.float(), dim=1)
     retreat_seen = retreat_seen | retreated
+    air_peak_x = torch.where(in_air, active_air_peak_x, foot_x)
 
     moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
-    setattr(env, touchdown_x_name, touchdown_x)
+    setattr(env, air_peak_x_name, air_peak_x)
+    setattr(env, stance_anchor_x_name, stance_anchor_x)
     setattr(env, retreat_seen_name, retreat_seen)
-    return penalty * moving.float()
+    return penalty * moving.float() / max(env.step_dt, 1.0e-6)
 
 
 def dense_swing_foot_target_location_exp(
@@ -1395,10 +1475,12 @@ def dense_swing_foot_target_location_exp(
     y_scale: float,
     minimum_height: float,
     max_tilt: float,
+    linear_progress_scale: float,
+    first_target_fraction: float,
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
 ) -> torch.Tensor:
-    """Dense swing reward for moving the foot toward takeoff x plus target stride and lane."""
+    """Dense swing reward for moving the foot toward a world-frame target stride and lane."""
     asset = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
@@ -1408,20 +1490,25 @@ def dense_swing_foot_target_location_exp(
     previous_contact_name = "_kbot_swing_target_previous_contact"
     takeoff_x_name = "_kbot_swing_target_takeoff_x"
     has_takeoff_name = "_kbot_swing_target_has_takeoff"
+    first_target_done_name = "_kbot_swing_target_first_target_done"
     previous_contact = getattr(env, previous_contact_name, None)
     takeoff_x = getattr(env, takeoff_x_name, None)
     has_takeoff = getattr(env, has_takeoff_name, None)
+    first_target_done = getattr(env, first_target_done_name, None)
     if previous_contact is None or previous_contact.shape != in_contact.shape or previous_contact.device != in_contact.device:
         previous_contact = in_contact.clone()
     if takeoff_x is None or takeoff_x.shape != foot_pos_w[:, :, 0].shape or takeoff_x.device != foot_pos_w.device:
         takeoff_x = foot_pos_w[:, :, 0].clone()
     if has_takeoff is None or has_takeoff.shape != in_contact.shape or has_takeoff.device != in_contact.device:
         has_takeoff = torch.zeros_like(in_contact)
+    if first_target_done is None or first_target_done.shape != env.episode_length_buf.shape or first_target_done.device != in_contact.device:
+        first_target_done = torch.zeros(env.num_envs, dtype=torch.bool, device=in_contact.device)
 
     reset = (env.episode_length_buf <= 1).unsqueeze(1)
     previous_contact = torch.where(reset, in_contact, previous_contact)
     takeoff_x = torch.where(reset, foot_pos_w[:, :, 0], takeoff_x)
     has_takeoff = torch.where(reset, torch.zeros_like(has_takeoff), has_takeoff)
+    first_target_done = torch.where(reset.squeeze(1), torch.zeros_like(first_target_done), first_target_done)
 
     takeoff = previous_contact & ~in_contact
     takeoff_x = torch.where(takeoff, foot_pos_w[:, :, 0], takeoff_x)
@@ -1432,14 +1519,30 @@ def dense_swing_foot_target_location_exp(
         origin_y = torch.zeros(env.num_envs, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
     else:
         origin_y = env_origins[:, 1].to(dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+    foot_x = foot_pos_w[:, :, 0]
     target_y = torch.stack((origin_y + target_left_y, origin_y + target_right_y), dim=1)
-    target_x = takeoff_x + target_length
-    x_error = (foot_pos_w[:, :, 0] - target_x) / max(x_scale, 1.0e-6)
+    first_length = target_length * min(max(first_target_fraction, 0.0), 1.0)
+    target_x = takeoff_x + torch.where(
+        first_target_done.unsqueeze(1),
+        torch.full_like(takeoff_x, target_length),
+        torch.full_like(takeoff_x, first_length),
+    )
+    x_error = (foot_x - target_x) / max(x_scale, 1.0e-6)
     y_error = (foot_pos_w[:, :, 1] - target_y) / max(y_scale, 1.0e-6)
     target_reward = torch.exp(-(torch.square(x_error) + torch.square(y_error)))
 
+    stance_x = torch.stack((foot_x[:, 1], foot_x[:, 0]), dim=1)
+    progress_span = target_x - stance_x
+    linear_progress = torch.where(
+        progress_span > 1.0e-6,
+        torch.clamp((foot_x - stance_x) / torch.clamp(progress_span, min=1.0e-6), min=0.0, max=1.0),
+        torch.zeros_like(progress_span),
+    )
+
     swing_active = ~in_contact & has_takeoff
-    reward = torch.sum(target_reward * swing_active.float(), dim=1)
+    reward = torch.sum((target_reward + linear_progress_scale * linear_progress) * swing_active.float(), dim=1)
+    touchdown = in_contact & has_takeoff
+    first_target_done = first_target_done | torch.any(touchdown, dim=1)
     has_takeoff = torch.where(in_contact, torch.zeros_like(has_takeoff), has_takeoff)
 
     moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
@@ -1447,6 +1550,7 @@ def dense_swing_foot_target_location_exp(
     setattr(env, previous_contact_name, in_contact)
     setattr(env, takeoff_x_name, takeoff_x)
     setattr(env, has_takeoff_name, has_takeoff)
+    setattr(env, first_target_done_name, first_target_done)
     return reward * moving.float() * upright
 
 

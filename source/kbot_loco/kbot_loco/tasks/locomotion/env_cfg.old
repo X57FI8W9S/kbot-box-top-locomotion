@@ -1,9 +1,8 @@
-"""Live KBot locomotion configs; historical experiment configs are in env_cfg.old."""
-
 from __future__ import annotations
 
 import math
 import os
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
@@ -19,6 +18,7 @@ from .assets import (
     IMPLICIT_HIP_ROLL_ACTUATOR_CFG,
     IMPLICIT_HIP_YAW_ACTUATOR_CFG,
     KBOT_CFG,
+    REPO_ROOT,
 )
 from . import mdp
 
@@ -293,6 +293,77 @@ class KBotForwardFlatEnvCfg_PLAY(KBotForwardFlatEnvCfg):
 
 
 @configclass
+class KBotForwardFlatV1ReproEnvCfg(KBotForwardFlatEnvCfg):
+    """V1 task with an optional USD override for artifact reproduction."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        usd_path = os.environ.get("KBOT_V1_REPRO_USD_PATH")
+        if usd_path:
+            self.scene.robot.spawn.usd_path = usd_path
+
+
+@configclass
+class KBotForwardFlatV1HybridWidthLaneEnvCfg(KBotForwardFlatEnvCfg):
+    """V1 walking world with V2.5 foot-width and foot-lane pressures.
+
+    This is a compatibility branch for V1 checkpoints. It intentionally keeps
+    the V1 reset pose, command range, action scale, episode length, and gait
+    rewards, while replacing only the lateral foot geometry targets.
+    """
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        hip_axis_left_y = 0.15835
+        hip_axis_right_y = -0.15805
+        sole_center_offsets = [
+            (0.03, -0.036528655, -0.0194786795),
+            (0.03, -0.036528755, -0.0234786545),
+        ]
+
+        self.rewards.foot_lateral_spacing_l1.weight = -9.0
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.28
+
+        self.rewards.foot_lateral_lane_l1.weight = -4.0
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.08
+
+        self.rewards.foot_lateral_lane_max_l1.weight = -2.0
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.06
+
+        self.rewards.foot_sole_lateral_lane_max_l1 = RewTerm(
+            func=mdp.foot_sole_lateral_lane_max_l1,
+            weight=-44.0,
+            params={
+                "target_left_y": hip_axis_left_y,
+                "target_right_y": hip_axis_right_y,
+                "tolerance": 0.008,
+                "foot_local_offsets": sole_center_offsets,
+                "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+            },
+        )
+
+
+@configclass
+class KBotForwardFlatV1HybridWidthLaneEnvCfg_PLAY(KBotForwardFlatV1HybridWidthLaneEnvCfg):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.commands.base_velocity.resampling_time_range = (10.0, 10.0)
+        self.episode_length_s = 60.0
+
+
+@configclass
 class KBotForwardFlatV2EnvCfg(KBotForwardFlatEnvCfg):
     """V2 clean-walk restart with fewer overlapping reward pressures.
 
@@ -434,7 +505,498 @@ class KBotForwardFlatV2EnvCfg_PLAY(KBotForwardFlatV2EnvCfg):
 
 
 @configclass
-class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2EnvCfg):
+class KBotForwardFlatV2ScratchHardEnvCfg(KBotForwardFlatV2EnvCfg):
+    """Scratch probe: keep posture rewards but restore hard fall cutoffs."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.05, 0.15)
+        self.rewards.forward_velocity_below_l2.weight = -4.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.05
+        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.55})
+        self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.95})
+
+
+@configclass
+class KBotForwardFlatV2ScratchStandEnvCfg(KBotForwardFlatV2EnvCfg):
+    """Scratch probe: first learn tall quiet support before asking for walking."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.05)
+        self.rewards.track_lin_vel_xy_exp.weight = 1.0
+        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.alternating_foot_phase.weight = 0.0
+        self.rewards.forward_velocity_below_l2.weight = 0.0
+        self.rewards.foot_sagittal_separation_l1.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = 0.0
+        self.rewards.stance_foot_flat_l2.weight = -1.0
+        self.rewards.base_height_l2.weight = -45.0
+        self.rewards.low_body_l2.weight = -160.0
+        self.rewards.upright_alive.weight = 10.0
+
+
+@configclass
+class KBotForwardFlatV2ScratchStandConservativeEnvCfg(KBotForwardFlatV2ScratchStandEnvCfg):
+    """Scratch probe: standing-first plus smaller action scale and reset noise."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.actions.joint_pos.scale = 0.10
+        self.events.reset_base.params["pose_range"] = {"x": (-0.02, 0.02), "y": (-0.02, 0.02), "yaw": (-0.02, 0.02)}
+        self.events.reset_base.params["velocity_range"] = {
+            "x": (-0.01, 0.01),
+            "y": (-0.01, 0.01),
+            "z": (-0.01, 0.01),
+            "roll": (-0.01, 0.01),
+            "pitch": (-0.01, 0.01),
+            "yaw": (-0.01, 0.01),
+        }
+        self.events.reset_robot_joints.params["position_range"] = (0.99, 1.01)
+
+
+@configclass
+class KBotForwardFlatV2ScratchBalanceEnvCfg(KBotForwardFlatV2ScratchStandConservativeEnvCfg):
+    """Scratch probe: balance-only survival before any gait shaping."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.actions.joint_pos.scale = 0.08
+        self.episode_length_s = 4.0
+
+        self.rewards.track_lin_vel_xy_exp.weight = 0.0
+        self.rewards.track_ang_vel_z_exp.weight = 0.0
+        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.alternating_foot_phase.weight = 0.0
+        self.rewards.foot_sagittal_separation_l1.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_l1.weight = 0.0
+        self.rewards.foot_lateral_spacing_l1.weight = -1.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -5.0
+        self.rewards.leg_frontal_plane_l1.weight = 0.0
+        self.rewards.foot_parallel_l2.weight = 0.0
+        self.rewards.foot_toe_in_l2.weight = 0.0
+        self.rewards.stance_foot_flat_l2.weight = 0.0
+
+        self.rewards.base_height_l2.weight = -60.0
+        self.rewards.base_height_l2.params["target_height"] = 0.78
+        self.rewards.low_body_l2.weight = -240.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.65
+        self.rewards.upright_alive.weight = 20.0
+        self.rewards.upright_alive.params["minimum_height"] = 0.65
+        self.rewards.upright_alive.params["max_tilt"] = 0.25
+        self.rewards.flat_orientation_l2.weight = -45.0
+        self.rewards.root_lateral_tilt_l2.weight = -120.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -500.0
+        self.rewards.hip_roll_yaw_position_l2.weight = -6.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -12.0
+        self.rewards.hip_roll_position_ema_5cycle_l2.weight = 0.0
+        self.rewards.termination_penalty.weight = -100.0
+
+        self.terminations.low_body = DoneTerm(func=mdp.root_height_below, params={"minimum_height": 0.55})
+        self.terminations.bad_orientation = DoneTerm(func=base_mdp.bad_orientation, params={"limit_angle": 0.65})
+
+
+@configclass
+class KBotForwardFlatV2ScratchV1BootstrapEnvCfg(KBotForwardFlatEnvCfg):
+    """Scratch bootstrap that mirrors the first V1 run that learned past falling."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 1024
+        self.episode_length_s = 3.0
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
+        self.commands.base_velocity.ranges.lin_vel_x = (0.10, 0.25)
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.5
+        self.rewards.track_lin_vel_xy_exp.params["std"] = math.sqrt(0.12)
+        self.rewards.track_ang_vel_z_exp.weight = 1.0
+        self.rewards.track_ang_vel_z_exp.params["std"] = math.sqrt(0.10)
+        self.rewards.action_rate_l2.weight = -0.025
+        self.rewards.feet_air_time.weight = 0.75
+        self.rewards.feet_air_time.params["threshold"] = 0.40
+        self.rewards.alternating_foot_phase.weight = 0.0
+        self.rewards.alive.weight = 5.0
+        self.rewards.base_height_l2.weight = -15.0
+        self.rewards.base_height_l2.params["target_height"] = 0.78
+
+        self.rewards.lateral_velocity_l2.weight = -2.0
+        self.rewards.yaw_rate_l2.weight = -0.5
+        self.rewards.root_lateral_tilt_l2.weight = 0.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = 0.0
+        self.rewards.world_heading_l2.weight = 0.0
+        self.rewards.forward_velocity_below_l2.weight = 0.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = 0.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_l1.weight = 0.0
+        self.rewards.foot_lateral_lane_max_l1.weight = 0.0
+        self.rewards.leg_frontal_plane_l1.weight = 0.0
+        self.rewards.left_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.right_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.max_leg_frontal_plane_l1.weight = 0.0
+        self.rewards.foot_sagittal_separation_l1.weight = 0.0
+        self.rewards.swing_foot_overtake_l1.weight = 0.0
+        self.rewards.foot_parallel_l2.weight = 0.0
+        self.rewards.foot_world_parallel_l2.weight = 0.0
+        self.rewards.foot_world_parallel_max_l2.weight = 0.0
+        self.rewards.foot_toe_in_l2.weight = 0.0
+        self.rewards.foot_flat_l2.weight = 0.0
+        self.rewards.stance_foot_flat_l2.weight = 0.0
+        self.rewards.wobble_joint_vel_l2.weight = 0.0
+        self.rewards.hip_roll_yaw_position_l2.weight = 0.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = 0.0
+
+        self.rewards.low_body_l2.weight = -30.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.45
+        self.rewards.knee_extension_l1.weight = -80.0
+        self.rewards.knee_extension_l1.params["min_bend"] = 0.50
+        self.rewards.termination_penalty.weight = -500.0
+
+        self.terminations.low_body = None
+        self.terminations.bad_orientation = None
+
+
+@configclass
+class KBotForwardFlatV23ScratchV1BootstrapEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
+    """V2.3 anti-fall bootstrap with the corrected hip-axis support width."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.foot_lateral_spacing_l1.weight = -0.25
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -0.75
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -0.20
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.08
+        self.rewards.foot_lateral_lane_max_l1.weight = -0.05
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.06
+
+
+@configclass
+class KBotForwardFlatV2GaitTransitionEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
+    """Continuation stage: turn the anti-fall seed into early forward gait gently."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.episode_length_s = 4.0
+        self.commands.base_velocity.ranges.lin_vel_x = (0.15, 0.30)
+
+        self.rewards.track_lin_vel_xy_exp.weight = 3.0
+        self.rewards.track_lin_vel_xy_exp.params["std"] = math.sqrt(0.08)
+        self.rewards.track_ang_vel_z_exp.weight = 1.5
+        self.rewards.action_rate_l2.weight = -0.04
+        self.rewards.feet_air_time.weight = 1.0
+        self.rewards.feet_air_time.params["threshold"] = 0.35
+        self.rewards.alternating_foot_phase.weight = 0.20
+
+        self.rewards.lateral_velocity_l2.weight = -3.0
+        self.rewards.yaw_rate_l2.weight = -1.5
+        self.rewards.root_lateral_tilt_l2.weight = -10.0
+        self.rewards.forward_velocity_below_l2.weight = -4.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.10
+
+        self.rewards.foot_lateral_spacing_l1.weight = -1.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -2.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.14
+        self.rewards.foot_sagittal_separation_l1.weight = -1.5
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.14
+        self.rewards.swing_foot_overtake_l1.weight = -2.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.10
+        self.rewards.foot_parallel_l2.weight = -0.3
+        self.rewards.foot_flat_l2.weight = -0.2
+        self.rewards.stance_foot_flat_l2.weight = -0.5
+
+        self.rewards.base_height_l2.weight = -18.0
+        self.rewards.base_height_l2.params["target_height"] = 0.78
+        self.rewards.low_body_l2.weight = -40.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.50
+        self.rewards.knee_extension_l1.weight = -40.0
+        self.rewards.knee_extension_l1.params["min_bend"] = 0.45
+
+
+@configclass
+class KBotForwardFlatV23GaitTransitionEnvCfg(KBotForwardFlatV2GaitTransitionEnvCfg):
+    """V2.3 gait transition with hip-axis support-width targets."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -0.3
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.08
+        self.rewards.foot_lateral_lane_max_l1.weight = -0.1
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.06
+
+
+@configclass
+class KBotForwardFlatV2YawLateralTransitionEnvCfg(KBotForwardFlatV2GaitTransitionEnvCfg):
+    """Continuation stage: keep early gait while reducing yaw, lateral drift, and roll bias."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.6
+        self.rewards.track_ang_vel_z_exp.weight = 2.0
+        self.rewards.action_rate_l2.weight = -0.05
+
+        self.rewards.lateral_velocity_l2.weight = -6.0
+        self.rewards.yaw_rate_l2.weight = -4.0
+        self.rewards.root_lateral_tilt_l2.weight = -25.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -90.0
+        self.rewards.root_lateral_tilt_ema_l2.params["tau_s"] = 2.0
+        self.rewards.world_heading_l2.weight = -8.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = -2.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -4.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.18
+        self.rewards.foot_lateral_lane_l1.weight = -2.0
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.06
+        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.swing_foot_overtake_l1.weight = -3.0
+        self.rewards.foot_parallel_l2.weight = -0.5
+        self.rewards.foot_flat_l2.weight = -0.3
+        self.rewards.stance_foot_flat_l2.weight = -0.8
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -2.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -5.0
+        self.rewards.hip_roll_yaw_position_ema_l2.params["tau_s"] = 2.0
+
+
+@configclass
+class KBotForwardFlatV2LateralCleanupEnvCfg(KBotForwardFlatV2YawLateralTransitionEnvCfg):
+    """Continuation stage: reduce lateral path drift and edge/toe contacts."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.4
+        self.rewards.track_ang_vel_z_exp.weight = 2.2
+        self.rewards.action_rate_l2.weight = -0.055
+        self.rewards.feet_air_time.weight = 1.2
+
+        self.rewards.lateral_velocity_l2.weight = -7.0
+        self.rewards.root_lateral_position_l2 = RewTerm(func=mdp.root_lateral_position_l2, weight=-8.0)
+        self.rewards.yaw_rate_l2.weight = -4.5
+        self.rewards.world_heading_l2.weight = -10.0
+        self.rewards.root_lateral_tilt_l2.weight = -30.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -110.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = -2.5
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -5.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.20
+        self.rewards.foot_lateral_lane_l1.weight = -3.0
+        self.rewards.foot_lateral_lane_l1.params["tolerance"] = 0.045
+        self.rewards.foot_lateral_lane_max_l1.weight = -1.0
+        self.rewards.foot_lateral_lane_max_l1.params["tolerance"] = 0.035
+        self.rewards.foot_parallel_l2.weight = -0.7
+        self.rewards.foot_flat_l2.weight = -0.5
+        self.rewards.stance_foot_flat_l2.weight = -1.2
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -2.5
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -6.0
+
+
+@configclass
+class KBotForwardFlatV2HipContactCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEnvCfg):
+    """Continuation stage: reduce hip-roll bias while improving contact duty."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.3
+        self.rewards.track_ang_vel_z_exp.weight = 2.2
+        self.rewards.feet_air_time.weight = 1.35
+        self.rewards.feet_air_time.params["threshold"] = 0.32
+        self.rewards.action_rate_l2.weight = -0.06
+
+        self.rewards.root_lateral_position_l2.weight = -6.0
+        self.rewards.lateral_velocity_l2.weight = -6.5
+        self.rewards.root_lateral_tilt_l2.weight = -35.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -140.0
+        self.rewards.root_lateral_tilt_ema_l2.params["tau_s"] = 2.5
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -3.5
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -10.0
+        self.rewards.hip_roll_yaw_position_ema_l2.params["tau_s"] = 2.5
+        self.rewards.hip_roll_position_ema_5cycle_l2 = RewTerm(
+            func=mdp.joint_position_ema_l2,
+            weight=-28.0,
+            params={"tau_s": 5.0, "asset_cfg": SceneEntityCfg("robot", joint_names=[".*hip_roll.*"])},
+        )
+
+        self.rewards.foot_lateral_lane_l1.weight = -2.5
+        self.rewards.foot_lateral_lane_max_l1.weight = -1.2
+        self.rewards.foot_sagittal_separation_l1.weight = -1.5
+        self.rewards.swing_foot_overtake_l1.weight = -2.0
+        self.rewards.foot_flat_l2.weight = -0.7
+        self.rewards.stance_foot_flat_l2.weight = -1.8
+        self.rewards.single_stance_foot_flat_l2 = RewTerm(
+            func=mdp.single_stance_foot_flat_l2,
+            weight=-1.2,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+            },
+        )
+
+
+@configclass
+class KBotForwardFlatV2StepLengthCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEnvCfg):
+    """Fine-tune stage: lengthen tiny rapid steps while preserving straight, upright gait."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.5
+        self.rewards.track_ang_vel_z_exp.weight = 2.4
+        self.rewards.action_rate_l2.weight = -0.07
+        self.rewards.feet_air_time.weight = 1.1
+        self.rewards.feet_air_time.params["threshold"] = 0.18
+
+        self.rewards.root_lateral_position_l2.weight = -9.0
+        self.rewards.lateral_velocity_l2.weight = -7.5
+        self.rewards.yaw_rate_l2.weight = -5.0
+        self.rewards.world_heading_l2.weight = -12.0
+        self.rewards.root_lateral_tilt_l2.weight = -35.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -125.0
+
+        self.rewards.base_height_l2.weight = -24.0
+        self.rewards.base_height_l2.params["target_height"] = 0.80
+        self.rewards.low_body_l2.weight = -55.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.55
+
+        self.rewards.foot_sagittal_separation_l1.weight = -3.5
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.08
+        self.rewards.swing_foot_overtake_l1.weight = -5.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.06
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.20
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.04
+
+        self.rewards.foot_lateral_spacing_l1.weight = -3.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -5.5
+        self.rewards.foot_lateral_lane_l1.weight = -3.2
+        self.rewards.foot_lateral_lane_max_l1.weight = -1.2
+        self.rewards.foot_parallel_l2.weight = -0.8
+        self.rewards.foot_flat_l2.weight = -0.6
+        self.rewards.stance_foot_flat_l2.weight = -1.4
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -3.0
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -8.0
+
+
+@configclass
+class KBotForwardFlatV2CadenceLengthCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEnvCfg):
+    """Fine-tune stage: slow the rapid shuffle while keeping the last good straightness."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.observations.policy.gait_phase.params["period_s"] = 1.20
+        self.rewards.alternating_foot_phase.params["period_s"] = 1.20
+        self.rewards.alternating_foot_phase.weight = 0.15
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.8
+        self.rewards.track_lin_vel_xy_exp.params["std"] = math.sqrt(0.08)
+        self.rewards.track_ang_vel_z_exp.weight = 2.2
+        self.rewards.action_rate_l2.weight = -0.055
+        self.rewards.feet_air_time.weight = 1.35
+        self.rewards.feet_air_time.params["threshold"] = 0.30
+
+        self.rewards.root_lateral_position_l2.weight = -7.0
+        self.rewards.lateral_velocity_l2.weight = -6.5
+        self.rewards.yaw_rate_l2.weight = -4.2
+        self.rewards.world_heading_l2.weight = -9.0
+        self.rewards.root_lateral_tilt_l2.weight = -28.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -105.0
+
+        self.rewards.base_height_l2.weight = -20.0
+        self.rewards.base_height_l2.params["target_height"] = 0.79
+        self.rewards.low_body_l2.weight = -45.0
+        self.rewards.low_body_l2.params["minimum_height"] = 0.54
+
+        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.16
+        self.rewards.swing_foot_overtake_l1.weight = -3.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.12
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.30
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.06
+
+        self.rewards.foot_lateral_spacing_l1.weight = -2.5
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -5.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -2.8
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.weight = -1.0
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_parallel_l2.weight = -0.6
+        self.rewards.foot_flat_l2.weight = -0.4
+        self.rewards.stance_foot_flat_l2.weight = -1.0
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -2.5
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -6.0
+
+
+@configclass
+class KBotForwardFlatV2HipAxisWidthCleanupEnvCfg(KBotForwardFlatV2LateralCleanupEnvCfg):
+    """Fine-tune stage: move support width to hip axes without spending hip roll."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.track_lin_vel_xy_exp.weight = 2.5
+        self.rewards.track_ang_vel_z_exp.weight = 2.4
+        self.rewards.action_rate_l2.weight = -0.06
+        self.rewards.feet_air_time.weight = 1.2
+
+        self.rewards.root_lateral_position_l2.weight = -12.0
+        self.rewards.lateral_velocity_l2.weight = -8.0
+        self.rewards.yaw_rate_l2.weight = -5.5
+        self.rewards.world_heading_l2.weight = -14.0
+        self.rewards.root_lateral_tilt_l2.weight = -45.0
+        self.rewards.root_lateral_tilt_ema_l2.weight = -180.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = -2.2
+        self.rewards.foot_lateral_spacing_l1.params["target_width"] = 0.3164
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -4.5
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.24
+        self.rewards.foot_lateral_lane_l1.weight = -2.4
+        self.rewards.foot_lateral_lane_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_l1.params["target_right_y"] = -0.1582
+        self.rewards.foot_lateral_lane_max_l1.weight = -0.8
+        self.rewards.foot_lateral_lane_max_l1.params["target_left_y"] = 0.1582
+        self.rewards.foot_lateral_lane_max_l1.params["target_right_y"] = -0.1582
+
+        self.rewards.foot_sagittal_separation_l1.weight = -1.2
+        self.rewards.swing_foot_overtake_l1.weight = -1.6
+        self.rewards.foot_parallel_l2.weight = -0.6
+        self.rewards.foot_flat_l2.weight = -0.5
+        self.rewards.stance_foot_flat_l2.weight = -1.2
+
+        self.rewards.hip_roll_yaw_position_l2.weight = -5.5
+        self.rewards.hip_roll_yaw_position_ema_l2.weight = -18.0
+        self.rewards.hip_roll_yaw_position_ema_l2.params["tau_s"] = 2.5
+
+
+@configclass
+class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchStandConservativeEnvCfg):
     """Scratch bootstrap from a raw-USD settled hand-authored standing pose."""
 
     def __post_init__(self) -> None:
@@ -524,6 +1086,13 @@ class KBotForwardFlatV2ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2EnvCfg):
 
 
 @configclass
+class KBotForwardFlatV24ScratchPoseBootstrapEnvCfg(KBotForwardFlatV2ScratchPoseBootstrapEnvCfg):
+    """V2.4 scratch seed from the settled hand-authored standing pose."""
+
+    pass
+
+
+@configclass
 class KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg(KBotForwardFlatV2ScratchPoseBootstrapEnvCfg):
     """V2.5 posed-start bootstrap that improves support width and starts stepping."""
 
@@ -592,6 +1161,118 @@ class KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg(KBotForwardFlatV2Scratch
 
 
 @configclass
+class KBotForwardFlatV25PoseGaitQualityEnvCfg(KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg):
+    """Continuation from V2.5 posed-start seed: improve swing quality without losing width."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.commands.base_velocity.ranges.lin_vel_x = (0.08, 0.16)
+
+        self.rewards.world_forward_velocity_clip.weight = 2.5
+        self.rewards.world_forward_velocity_clip.params["max_velocity"] = 0.12
+        self.rewards.action_rate_l2.weight = -0.30
+        self.rewards.dof_acc_l2.weight = -5.0e-7
+        self.rewards.wobble_joint_vel_l2.weight = -0.12
+        self.rewards.forward_velocity_below_l2.weight = -6.0
+        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.07
+        self.rewards.world_forward_velocity_below_l2.weight = -24.0
+        self.rewards.world_forward_velocity_below_l2.params["minimum_velocity"] = 0.05
+
+        self.rewards.feet_air_time.weight = 1.0
+        self.rewards.feet_air_time.params["threshold"] = 0.22
+        self.rewards.alternating_foot_phase.weight = 0.18
+        self.rewards.foot_sagittal_separation_l1.weight = -2.0
+        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.10
+        self.rewards.swing_foot_overtake_l1.weight = -3.0
+        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.08
+        self.rewards.swing_foot_overtake_l1.params["target_air_time"] = 0.20
+        self.rewards.swing_foot_overtake_l1.params["grace_time"] = 0.08
+        self.rewards.valid_step_root_advance = RewTerm(
+            func=mdp.valid_step_root_advance_reward,
+            weight=4.0,
+            params={
+                "command_name": "base_velocity",
+                "target_cycle_hz": 1.25,
+                "min_step_advance": 0.020,
+                "min_air_time": 0.12,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.step_advance_margin = RewTerm(
+            func=mdp.step_advance_margin_reward,
+            weight=float(os.environ.get("KBOT_STEP_MARGIN_WEIGHT", "8.0")),
+            params={
+                "command_name": "base_velocity",
+                "target_cycle_hz": 1.25,
+                "min_step_advance": 0.008,
+                "max_step_advance": 0.12,
+                "short_step_penalty_scale": 1.5,
+                "min_step_duration": 0.07,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.dense_single_support_step_progress = RewTerm(
+            func=mdp.dense_single_support_step_progress_reward,
+            weight=float(os.environ.get("KBOT_DENSE_STEP_PROGRESS_WEIGHT", "6.0")),
+            params={
+                "command_name": "base_velocity",
+                "target_cycle_hz": 1.25,
+                "max_step_advance": 0.12,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        # Future swing-clearance margin target: 0.005 m. No z reward is active in this stage.
+        self.rewards.supported_forward_velocity = RewTerm(
+            func=mdp.supported_forward_velocity_reward,
+            weight=1.5,
+            params={
+                "command_name": "base_velocity",
+                "min_single_support_fraction": 0.20,
+                "max_velocity": 0.12,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.walking_cycle_cadence_above_l2 = RewTerm(
+            func=mdp.walking_cycle_cadence_above_l2,
+            weight=-1.0,
+            params={
+                "max_cycle_hz": 1.25,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
+        self.rewards.contact_chatter_l1 = RewTerm(
+            func=mdp.contact_chatter_l1,
+            weight=-6.0,
+            params={
+                "min_air_time": 0.12,
+                "command_name": "base_velocity",
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
+
+        self.rewards.root_lateral_position_l2 = RewTerm(func=mdp.root_lateral_position_l2, weight=-12.0)
+        self.rewards.lateral_velocity_l2.weight = -20.0
+        self.rewards.yaw_rate_l2.weight = -20.0
+        self.rewards.world_heading_l2.weight = -90.0
+
+        self.rewards.foot_lateral_spacing_l1.weight = -9.0
+        self.rewards.foot_signed_lateral_clearance_l1.weight = -12.0
+        self.rewards.foot_signed_lateral_clearance_l1.params["minimum_width"] = 0.28
+        self.rewards.foot_sole_lateral_lane_max_l1.weight = -44.0
+
+        self.rewards.foot_world_parallel_max_l2.weight = -0.8
+        self.rewards.foot_flat_l2.weight = -4.0
+        self.rewards.stance_foot_flat_l2.weight = -1.2
+        self.rewards.action_rate_l2.weight = -0.30
+        self.rewards.stand_joint_position_l2.weight = -0.5
+
+
+@configclass
 class KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg(KBotForwardFlatV25ScratchPoseWidthBootstrapEnvCfg):
     """Frozen V2.5 pose-gait stack that produced the model_648 checkpoint.
 
@@ -645,6 +1326,35 @@ class KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg(KBotForwardFlatV25Scratch
 
 
 @configclass
+class KBotForwardFlatV25S42ChatterSuppressionEnvCfg(KBotForwardFlatV25PoseGaitQualityEnvCfg):
+    """S4.2: suppress contact chatter from model_648 without training speed."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.contact_chatter_l1.weight = -10.0
+        self.rewards.contact_chatter_l1.params["min_air_time"] = 0.10
+
+
+@configclass
+class KBotForwardFlatV25S42ChatterFrom648CompatEnvCfg(KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg):
+    """S4.2 branch from the frozen model_648 stack with only chatter added."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        self.rewards.contact_chatter_l1 = RewTerm(
+            func=mdp.contact_chatter_l1,
+            weight=-10.0,
+            params={
+                "min_air_time": 0.10,
+                "command_name": "base_velocity",
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            },
+        )
+
+
+@configclass
 class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg):
     """V3 scratch restart from the frozen model_648 reward topology.
 
@@ -672,26 +1382,7 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
         #   its editable weight in the matching reward_weight_groups theme.
         # - If a reward fits multiple themes, choose the one that describes the
         #   main behavior you are tuning, and keep the name alphabetized there.
-        # Central V3 gait schedule; timing-derived rewards should stay tied to these targets.
-        target_root_speed_mps = 0.375
-        target_step_length_m = 0.60
-        first_step_fraction = 0.5
-        swing_phase_fraction = 0.375
-        swing_overtake_grace_time_s = 0.04
-        target_cycle_hz = target_root_speed_mps / max(target_step_length_m, 1.0e-6)
-        target_step_hz = 2.0 * target_cycle_hz
-        target_cycle_period_s = 1.0 / max(target_cycle_hz, 1.0e-6)
-        target_air_time_s = swing_phase_fraction * target_cycle_period_s
-        first_step_length_m = target_step_length_m * first_step_fraction
-        target_left_y_m = 0.1582
-        target_right_y_m = -0.1582
-        sole_center_offsets = [
-            (0.03, -0.036528655, -0.0194786795),
-            (0.03, -0.036528755, -0.0234786545),
-        ]
-
-        self.commands.base_velocity.ranges.lin_vel_x = (target_root_speed_mps, target_root_speed_mps)
-        self.observations.policy.gait_phase.params["period_s"] = target_cycle_period_s
+        self.commands.base_velocity.ranges.lin_vel_x = (0.75, 0.75)
         self.terminations.low_body.params["minimum_height"] = float(os.getenv("KBOT_LOW_BODY_TERMINATION_HEIGHT", "0.65"))
 
         reward_weight_groups = (
@@ -707,7 +1398,7 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
                     "hip_roll_yaw_position_ema_l2": 0.0,
                     "hip_roll_yaw_position_l2": 0.0,
                     "knee_extension_l1": 0.0,
-                    "signed_joint_pair_ema_symmetry_l2": -200.0,
+                    "signed_joint_pair_ema_symmetry_l2": -90.0,
                     "stand_joint_position_l2": -1.0,
                     "wobble_joint_vel_l2": -0.04,
                 },
@@ -718,9 +1409,9 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
                     "backward_velocity_l2": -100.0,
                     "forward_velocity_below_l2": -6.0,
                     "track_ang_vel_z_exp": 1.0,
-                    "track_lin_vel_xy_exp": 15.0,
+                    "track_lin_vel_xy_exp": 30.0,
                     "world_forward_velocity_below_l2": -24.0,
-                    "world_forward_velocity_clip": 15.0,
+                    "world_forward_velocity_clip": 30.0,
                     "world_heading_l2": -1000.0,
                     "yaw_rate_l2": -200.0,
                 },
@@ -731,12 +1422,12 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
                     "alternating_foot_phase": 1.0,
                     "alternating_step_symmetry_l2": -8.0,
                     "contact_duty_symmetry_l2": -10.0,
-                    "dense_foot_swing_speed": 40.0,
-                    "dense_swing_foot_target_location_exp": 500.0,
+                    "dense_foot_swing_speed": 20.0,
+                    "dense_swing_foot_target_location_exp": 30.0,
                     "dense_swing_step_length": 0.0,
                     "feet_air_time": 2.0,
                     "foot_sagittal_separation_l1": -12.0,
-                    "foot_retreat": -12.0,
+                    "stance_foot_retreat_l1": -12.0,
                     "swing_foot_overtake_l1": -150.0,
                     "swing_sole_clearance": 1.0,
                 },
@@ -775,7 +1466,7 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
                     "low_body_l2": -120.0,
                     "root_lateral_tilt_ema_l2": -12000.0,
                     "root_lateral_tilt_l2": -90.0,
-                    "termination_penalty": -3000.0,
+                    "termination_penalty": -1500.0,
                     "undesired_contacts": -2.0,
                     "upright_alive": 8.0,
                 },
@@ -816,47 +1507,28 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
         }
 
         reward_params = {
-            "alternating_foot_phase": {
-                "period_s": target_cycle_period_s,
-            },
             "dense_foot_swing_speed": {
-                "foot_local_offsets": sole_center_offsets,
                 "max_step_credit": 2.0,
-                "max_height": 0.020,
-                "max_tilt": 0.45,
-                "min_height": 0.005,
-                "minimum_height": 0.76,
-                "target_air_time": target_air_time_s,
-                "target_left_y": target_left_y_m,
-                "target_length": target_step_length_m,
-                "target_right_y": target_right_y_m,
-                "y_linear_radius": 0.12,
-                "y_scale": 0.04,
-                "z_scale": 0.005,
+                "swing_phase_fraction": 0.375,
+                "target_length": 0.60,
             },
             "dense_swing_step_length": {
                 "crossover_fraction": 0.66,
                 "lambda_per_m": 0.0,
                 "linear_gain": 0.0,
-                "target_length": target_step_length_m,
+                "target_length": 0.60,
             },
             "dense_swing_foot_target_location_exp": {
-                "first_target_fraction": first_step_fraction,
-                "linear_progress_scale": 1.0,
                 "max_tilt": 0.45,
                 "minimum_height": 0.76,
-                "target_left_y": target_left_y_m,
-                "target_length": target_step_length_m,
-                "target_right_y": target_right_y_m,
+                "target_left_y": 0.1582,
+                "target_length": 0.60,
+                "target_right_y": -0.1582,
                 "x_scale": 0.15,
                 "y_scale": 0.08,
             },
-            "feet_air_time": {
-                "threshold": target_air_time_s,
-            },
             "foot_sagittal_separation_l1": {
-                "first_target_fraction": first_step_fraction,
-                "target_length": target_step_length_m,
+                "target_length": 0.60,
             },
             "forward_velocity_below_l2": {
                 "minimum_velocity": 0.07,
@@ -864,13 +1536,11 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
             "hip_roll_position_ema_5cycle_l2": adaptive_cycle_ema_params,
             "hip_roll_yaw_position_ema_l2": adaptive_cycle_ema_params,
             "root_lateral_tilt_ema_l2": adaptive_cycle_ema_params,
-            "foot_retreat": {
+            "stance_foot_retreat_l1": {
                 "retreat_epsilon": 0.002,
             },
             "swing_foot_overtake_l1": {
-                "grace_time": swing_overtake_grace_time_s,
-                "target_air_time": target_air_time_s,
-                "target_length": first_step_length_m,
+                "target_length": 0.30,
             },
             "track_lin_vel_xy_exp": {
                 "centerline_target_y": 0.0,
@@ -887,7 +1557,7 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
                 "centerline_width_sq": 0.01,
                 "heading_width_sq": 0.01,
                 "max_tilt": 0.45,
-                "max_velocity": target_root_speed_mps,
+                "max_velocity": 0.75,
                 "minimum_height": 0.76,
             },
         }
@@ -959,9 +1629,9 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
                     **adaptive_cycle_ema_params,
                 },
             ),
-            "foot_retreat": RewTerm(
-                func=mdp.foot_retreat,
-                weight=reward_weights["foot_retreat"],
+            "stance_foot_retreat_l1": RewTerm(
+                func=mdp.stance_foot_retreat_l1,
+                weight=reward_weights["stance_foot_retreat_l1"],
                 params={
                     "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
                     "command_name": "base_velocity",
@@ -976,7 +1646,10 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
                     "command_name": "base_velocity",
                     "drag_floor": 0.002,
                     "drag_weight": 3.0,
-                    "foot_local_offsets": sole_center_offsets,
+                    "foot_local_offsets": [
+                        (0.03, -0.036528655, -0.0194786795),
+                        (0.03, -0.036528755, -0.0234786545),
+                    ],
                     "max_tilt": 0.45,
                     "minimum_height": 0.76,
                     "over_height": 0.020,
@@ -1000,3 +1673,33 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
             reward_term.params.update(params)
         for reward_name, weight in reward_weights.items():
             getattr(self.rewards, reward_name).weight = weight
+
+
+@configclass
+class KBotForwardFlatV2ScratchActionBootstrapEnvCfg(KBotForwardFlatV2ScratchV1BootstrapEnvCfg):
+    """Scratch bootstrap with a short V1-derived recovery-action prior."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.early_action_sequence_l2 = RewTerm(
+            func=mdp.early_action_sequence_l2,
+            weight=-1.0,
+            params={
+                "duration_s": 0.40,
+                "targets": [
+                    [0.2099, -0.1198, 0.1361, 1.2101, 0.4279, -0.6150, -2.7360, 3.1930, -2.3437, -0.8811],
+                    [5.1104, -2.9871, 1.3583, -0.7267, -0.1990, -1.2123, 5.0458, -1.9918, -5.4884, 6.2425],
+                    [1.1912, -2.8021, -5.1936, -0.8531, -4.0128, -0.1630, -1.4994, -3.4933, -3.1833, 4.3908],
+                ],
+            },
+        )
+
+
+@configclass
+class KBotForwardFlatV2ScratchActionBootstrapStrongEnvCfg(KBotForwardFlatV2ScratchActionBootstrapEnvCfg):
+    """Scratch bootstrap that makes the first-second recovery action prior dominant."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.early_action_sequence_l2.weight = -20.0
+        self.rewards.early_action_sequence_l2.params["duration_s"] = 1.0
