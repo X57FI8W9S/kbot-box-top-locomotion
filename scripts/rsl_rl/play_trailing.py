@@ -424,6 +424,14 @@ def _mean_stats(rows: list[tuple[float, float]]) -> dict[str, float]:
     }
 
 
+def _duration_ema(rows: list[tuple[float, float]], smoothing_cycles: float) -> float:
+    ema = float("nan")
+    alpha = 1.0 / max(smoothing_cycles, 1.0e-6)
+    for duration_s, _length_m in rows:
+        ema = duration_s if not np.isfinite(ema) else (1.0 - alpha) * ema + alpha * duration_s
+    return ema
+
+
 def _recent_step_stats(events: deque[tuple[int, str, float]], cycle_window: int, dt: float) -> dict[str, dict[str, float]]:
     left_steps: list[tuple[float, float]] = []
     right_steps: list[tuple[float, float]] = []
@@ -449,11 +457,18 @@ def _recent_step_stats(events: deque[tuple[int, str, float]], cycle_window: int,
         previous_event = (frame, side, root_x)
     recent_approved_steps = approved_steps[-2 * cycle_window :]
     approved_fraction = float(np.mean(recent_approved_steps)) if recent_approved_steps else 0.0
+    cycle_stats = _mean_stats(full_cycles[-cycle_window:])
+    cycle_duration_ema_s = _duration_ema(full_cycles, float(cycle_window))
+    cycle_duration_error_s = cycle_duration_ema_s - cycle_stats["time_s"]
     return {
         "L": _mean_stats(left_steps[-cycle_window:]),
         "R": _mean_stats(right_steps[-cycle_window:]),
-        "C": _mean_stats(full_cycles[-cycle_window:]),
+        "C": cycle_stats,
         "approved_fraction": approved_fraction,
+        "cycle_duration_ema_abs_error_s": abs(cycle_duration_error_s) if np.isfinite(cycle_duration_error_s) else float("nan"),
+        "cycle_duration_ema_minus_last_window_s": cycle_duration_error_s,
+        "cycle_duration_ema_s": cycle_duration_ema_s,
+        "cycle_duration_last_window_s": cycle_stats["time_s"],
     }
 
 

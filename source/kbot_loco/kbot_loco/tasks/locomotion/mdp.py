@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import math
+
 import torch
 
 from isaaclab.managers import SceneEntityCfg
@@ -87,9 +89,119 @@ def root_lateral_tilt_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Sce
     return torch.square(asset.data.projected_gravity_b[:, 1])
 
 
+def _full_cycle_duration_ema(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    smoothing_cycles: float,
+    min_cycle_duration_s: float,
+    max_cycle_duration_s: float,
+    reference: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return a shared per-env EMA of same-foot touchdown cycle duration."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    now = env.episode_length_buf.to(reference.dtype) * env.step_dt
+
+    last_touchdown_name = "_kbot_full_cycle_duration_touchdown_time"
+    duration_ema_name = "_kbot_full_cycle_duration_ema"
+    seen_touchdown_name = "_kbot_full_cycle_duration_seen_touchdown"
+    seen_duration_name = "_kbot_full_cycle_duration_seen_duration"
+    update_step_name = "_kbot_full_cycle_duration_update_step"
+
+    last_touchdown = getattr(env, last_touchdown_name, None)
+    duration_ema = getattr(env, duration_ema_name, None)
+    seen_touchdown = getattr(env, seen_touchdown_name, None)
+    seen_duration = getattr(env, seen_duration_name, None)
+    update_step = getattr(env, update_step_name, None)
+
+    shape = first_contact.shape
+    if last_touchdown is None or last_touchdown.shape != shape or last_touchdown.device != reference.device:
+        last_touchdown = torch.zeros(shape, dtype=reference.dtype, device=reference.device)
+    if duration_ema is None or duration_ema.shape != shape or duration_ema.device != reference.device:
+        duration_ema = torch.zeros(shape, dtype=reference.dtype, device=reference.device)
+    if seen_touchdown is None or seen_touchdown.shape != shape or seen_touchdown.device != reference.device:
+        seen_touchdown = torch.zeros(shape, dtype=torch.bool, device=reference.device)
+    if seen_duration is None or seen_duration.shape != shape or seen_duration.device != reference.device:
+        seen_duration = torch.zeros(shape, dtype=torch.bool, device=reference.device)
+    if update_step is None or update_step.shape != env.episode_length_buf.shape or update_step.device != reference.device:
+        update_step = torch.full_like(env.episode_length_buf, -1)
+
+    current_step = env.episode_length_buf
+    reset = current_step <= 1
+    needs_update = update_step != current_step
+    last_touchdown = torch.where(reset[:, None], now[:, None].expand_as(last_touchdown), last_touchdown)
+    duration_ema = torch.where(reset[:, None], torch.zeros_like(duration_ema), duration_ema)
+    seen_touchdown = torch.where(reset[:, None], torch.zeros_like(seen_touchdown), seen_touchdown)
+    seen_duration = torch.where(reset[:, None], torch.zeros_like(seen_duration), seen_duration)
+
+    alpha = min(max(1.0 / max(smoothing_cycles, 1.0e-6), 0.0), 1.0)
+    for foot_i in range(first_contact.shape[1]):
+        touchdown = first_contact[:, foot_i] & needs_update
+        measured = torch.clamp(now - last_touchdown[:, foot_i], min=min_cycle_duration_s, max=max_cycle_duration_s)
+        valid_cycle = touchdown & seen_touchdown[:, foot_i] & (now - last_touchdown[:, foot_i] > env.step_dt)
+        updated = torch.where(
+            seen_duration[:, foot_i],
+            (1.0 - alpha) * duration_ema[:, foot_i] + alpha * measured,
+            measured,
+        )
+        duration_ema[:, foot_i] = torch.where(valid_cycle, updated, duration_ema[:, foot_i])
+        seen_duration[:, foot_i] = seen_duration[:, foot_i] | valid_cycle
+        last_touchdown[:, foot_i] = torch.where(touchdown, now, last_touchdown[:, foot_i])
+        seen_touchdown[:, foot_i] = seen_touchdown[:, foot_i] | touchdown
+
+    update_step = torch.where(needs_update, current_step, update_step)
+    setattr(env, last_touchdown_name, last_touchdown)
+    setattr(env, duration_ema_name, duration_ema)
+    setattr(env, seen_touchdown_name, seen_touchdown)
+    setattr(env, seen_duration_name, seen_duration)
+    setattr(env, update_step_name, update_step)
+
+    has_duration = torch.any(seen_duration, dim=1)
+    duration_sum = torch.sum(torch.where(seen_duration, duration_ema, torch.zeros_like(duration_ema)), dim=1)
+    duration_count = torch.clamp(torch.sum(seen_duration.float(), dim=1), min=1.0)
+    mean_duration = duration_sum / duration_count
+    return mean_duration, has_duration
+
+
+def _adaptive_ema_alpha(
+    env: ManagerBasedRLEnv,
+    tau_s: float,
+    reference: torch.Tensor,
+    sensor_cfg: SceneEntityCfg | None,
+    ema_cycle_count: float,
+    cycle_duration_smoothing_cycles: float,
+    min_cycle_duration_s: float,
+    max_cycle_duration_s: float,
+    min_tau_s: float,
+    max_tau_s: float,
+) -> torch.Tensor:
+    """Compute fixed-time or measured-cycle adaptive EMA alpha per environment."""
+    fallback_tau = max(tau_s, 1.0e-6)
+    tau = torch.full((env.num_envs,), fallback_tau, dtype=reference.dtype, device=reference.device)
+    if sensor_cfg is not None and ema_cycle_count > 0.0:
+        cycle_duration, has_duration = _full_cycle_duration_ema(
+            env,
+            sensor_cfg,
+            cycle_duration_smoothing_cycles,
+            min_cycle_duration_s,
+            max_cycle_duration_s,
+            reference,
+        )
+        measured_tau = torch.clamp(cycle_duration * ema_cycle_count, min=min_tau_s, max=max_tau_s)
+        tau = torch.where(has_duration, measured_tau, tau)
+    return torch.clamp(env.step_dt / tau, min=0.0, max=1.0)
+
+
 def root_lateral_tilt_ema_l2(
     env: ManagerBasedRLEnv,
     tau_s: float,
+    sensor_cfg: SceneEntityCfg | None = None,
+    ema_cycle_count: float = 0.0,
+    cycle_duration_smoothing_cycles: float = 5.0,
+    min_cycle_duration_s: float = 0.25,
+    max_cycle_duration_s: float = 2.0,
+    min_tau_s: float = 0.75,
+    max_tau_s: float = 10.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize persistent side lean with an exponential moving average."""
@@ -100,7 +212,18 @@ def root_lateral_tilt_ema_l2(
     if ema is None or ema.shape != tilt.shape or ema.device != tilt.device:
         ema = torch.zeros_like(tilt)
 
-    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    alpha = _adaptive_ema_alpha(
+        env,
+        tau_s,
+        tilt,
+        sensor_cfg,
+        ema_cycle_count,
+        cycle_duration_smoothing_cycles,
+        min_cycle_duration_s,
+        max_cycle_duration_s,
+        min_tau_s,
+        max_tau_s,
+    )
     reset = env.episode_length_buf <= 1
     ema = torch.where(reset, tilt, (1.0 - alpha) * ema + alpha * tilt)
     setattr(env, buffer_name, ema)
@@ -111,6 +234,13 @@ def signed_joint_pair_ema_symmetry_l2(
     env: ManagerBasedRLEnv,
     joint_pairs: list[tuple[str, str, float]],
     tau_s: float,
+    sensor_cfg: SceneEntityCfg | None = None,
+    ema_cycle_count: float = 0.0,
+    cycle_duration_smoothing_cycles: float = 5.0,
+    min_cycle_duration_s: float = 0.25,
+    max_cycle_duration_s: float = 2.0,
+    min_tau_s: float = 0.75,
+    max_tau_s: float = 10.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize persistent left/right joint-pair bias after sign normalization."""
@@ -131,7 +261,18 @@ def signed_joint_pair_ema_symmetry_l2(
     if ema is None or ema.shape != error.shape or ema.device != error.device:
         ema = torch.zeros_like(error)
 
-    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    alpha = _adaptive_ema_alpha(
+        env,
+        tau_s,
+        error,
+        sensor_cfg,
+        ema_cycle_count,
+        cycle_duration_smoothing_cycles,
+        min_cycle_duration_s,
+        max_cycle_duration_s,
+        min_tau_s,
+        max_tau_s,
+    ).unsqueeze(1)
     reset = (env.episode_length_buf <= 1).unsqueeze(1)
     ema = torch.where(reset, error, (1.0 - alpha) * ema + alpha * error)
     setattr(env, buffer_name, ema)
@@ -198,6 +339,36 @@ def _upright_health_gate(
     return (height_ok & (tilt < max_tilt)).float()
 
 
+def _centerline_gaussian_gate(
+    env: ManagerBasedRLEnv,
+    target_y: float,
+    width_sq: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return a smooth gate that is one on the center line and decays with lateral drift."""
+    asset = env.scene[asset_cfg.name]
+    env_origins = getattr(env.scene, "env_origins", None)
+    if env_origins is None:
+        lateral_pos = asset.data.root_pos_w[:, 1]
+    else:
+        lateral_pos = asset.data.root_pos_w[:, 1] - env_origins[:, 1]
+    return torch.exp(-torch.square(lateral_pos - target_y) / max(width_sq, 1.0e-6))
+
+
+def _world_heading_gaussian_gate(
+    env: ManagerBasedRLEnv,
+    width_sq: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return one when the root faces world +X and decay as yaw diverges."""
+    asset = env.scene[asset_cfg.name]
+    forward_b = torch.zeros(env.num_envs, 3, device=asset.data.root_pos_w.device)
+    forward_b[:, 0] = 1.0
+    forward_w = quat_apply(asset.data.root_quat_w, forward_b)
+    heading_error_sq = torch.square(forward_w[:, 1]) + torch.square(torch.clamp(-forward_w[:, 0], min=0.0))
+    return torch.exp(-heading_error_sq / max(width_sq, 1.0e-6))
+
+
 def upright_gated_track_lin_vel_xy_exp(
     env: ManagerBasedRLEnv,
     std: float,
@@ -215,6 +386,39 @@ def upright_gated_track_lin_vel_xy_exp(
     return torch.exp(-lin_vel_error / std**2) * _upright_health_gate(env, minimum_height, max_tilt, asset_cfg)
 
 
+def upright_centerline_gated_track_lin_vel_xy_exp(
+    env: ManagerBasedRLEnv,
+    std: float,
+    command_name: str,
+    minimum_height: float,
+    max_tilt: float,
+    centerline_target_y: float,
+    centerline_width_sq: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward commanded body-frame velocity tracking only while upright and near world y=0."""
+    base_reward = upright_gated_track_lin_vel_xy_exp(env, std, command_name, minimum_height, max_tilt, asset_cfg)
+    return base_reward * _centerline_gaussian_gate(env, centerline_target_y, centerline_width_sq, asset_cfg)
+
+
+def upright_centerline_heading_gated_track_lin_vel_xy_exp(
+    env: ManagerBasedRLEnv,
+    std: float,
+    command_name: str,
+    minimum_height: float,
+    max_tilt: float,
+    centerline_target_y: float,
+    centerline_width_sq: float,
+    heading_width_sq: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward body-frame velocity tracking only while upright, centered, and facing world +X."""
+    base_reward = upright_gated_track_lin_vel_xy_exp(env, std, command_name, minimum_height, max_tilt, asset_cfg)
+    centerline_gate = _centerline_gaussian_gate(env, centerline_target_y, centerline_width_sq, asset_cfg)
+    heading_gate = _world_heading_gaussian_gate(env, heading_width_sq, asset_cfg)
+    return base_reward * centerline_gate * heading_gate
+
+
 def upright_gated_world_forward_velocity_clip(
     env: ManagerBasedRLEnv,
     max_velocity: float,
@@ -228,19 +432,54 @@ def upright_gated_world_forward_velocity_clip(
     )
 
 
+def upright_centerline_gated_world_forward_velocity_clip(
+    env: ManagerBasedRLEnv,
+    max_velocity: float,
+    minimum_height: float,
+    max_tilt: float,
+    centerline_target_y: float,
+    centerline_width_sq: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward clipped world +X progress only while upright and near world y=0."""
+    base_reward = upright_gated_world_forward_velocity_clip(env, max_velocity, minimum_height, max_tilt, asset_cfg)
+    return base_reward * _centerline_gaussian_gate(env, centerline_target_y, centerline_width_sq, asset_cfg)
+
+
+def upright_centerline_heading_gated_world_forward_velocity_clip(
+    env: ManagerBasedRLEnv,
+    max_velocity: float,
+    minimum_height: float,
+    max_tilt: float,
+    centerline_target_y: float,
+    centerline_width_sq: float,
+    heading_width_sq: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward clipped world +X progress only while upright, centered, and facing world +X."""
+    base_reward = upright_gated_world_forward_velocity_clip(env, max_velocity, minimum_height, max_tilt, asset_cfg)
+    centerline_gate = _centerline_gaussian_gate(env, centerline_target_y, centerline_width_sq, asset_cfg)
+    heading_gate = _world_heading_gaussian_gate(env, heading_width_sq, asset_cfg)
+    return base_reward * centerline_gate * heading_gate
+
+
 def swing_sole_clearance_reward(
     env: ManagerBasedRLEnv,
     command_name: str,
     target_height: float,
     drag_floor: float,
     drag_weight: float,
+    over_height: float,
+    over_scale: float,
+    over_weight: float,
+    over_penalty_cap: float,
     minimum_height: float,
     max_tilt: float,
     foot_local_offsets: list[tuple[float, float, float]],
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Reward newly reached swing clearance and penalize dragging during single support."""
+    """Reward newly reached swing clearance and penalize dragging or over-kicking during single support."""
     asset = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
@@ -273,9 +512,13 @@ def swing_sole_clearance_reward(
     setattr(env, max_height_name, updated_max)
 
     drag_penalty = drag_weight * torch.clamp(drag_floor - sole_height, min=0.0) / max(drag_floor, 1.0e-6)
+    over_penalty = over_weight * torch.square(
+        torch.clamp(sole_height - over_height, min=0.0) / max(over_scale, 1.0e-6)
+    )
+    over_penalty = torch.clamp(over_penalty, max=over_penalty_cap)
 
     active = single_support_swing & moving[:, None] & (upright[:, None] > 0.0)
-    return torch.sum((clearance_reward - drag_penalty) * active.float(), dim=1)
+    return torch.sum((clearance_reward - drag_penalty - over_penalty) * active.float(), dim=1)
 
 
 def walking_cycle_cadence_above_l2(
@@ -497,6 +740,12 @@ def contact_duty_symmetry_l2(
     env: ManagerBasedRLEnv,
     tau_s: float,
     sensor_cfg: SceneEntityCfg,
+    ema_cycle_count: float = 0.0,
+    cycle_duration_smoothing_cycles: float = 5.0,
+    min_cycle_duration_s: float = 0.25,
+    max_cycle_duration_s: float = 2.0,
+    min_tau_s: float = 0.75,
+    max_tau_s: float = 10.0,
 ) -> torch.Tensor:
     """Penalize persistent left/right stance-duty imbalance."""
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
@@ -508,7 +757,18 @@ def contact_duty_symmetry_l2(
     if ema is None or ema.shape != contact.shape or ema.device != contact.device:
         ema = torch.zeros_like(contact)
 
-    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    alpha = _adaptive_ema_alpha(
+        env,
+        tau_s,
+        contact,
+        sensor_cfg,
+        ema_cycle_count,
+        cycle_duration_smoothing_cycles,
+        min_cycle_duration_s,
+        max_cycle_duration_s,
+        min_tau_s,
+        max_tau_s,
+    ).unsqueeze(1)
     reset = (env.episode_length_buf <= 1).unsqueeze(1)
     ema = torch.where(reset, contact, (1.0 - alpha) * ema + alpha * contact)
     setattr(env, buffer_name, ema)
@@ -521,6 +781,12 @@ def alternating_step_symmetry_l2(
     advance_scale: float,
     duration_scale: float,
     sensor_cfg: SceneEntityCfg,
+    ema_cycle_count: float = 0.0,
+    cycle_duration_smoothing_cycles: float = 5.0,
+    min_cycle_duration_s: float = 0.25,
+    max_cycle_duration_s: float = 2.0,
+    min_tau_s: float = 0.75,
+    max_tau_s: float = 10.0,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize persistent left/right alternating-step advance and timing imbalance."""
@@ -565,7 +831,18 @@ def alternating_step_symmetry_l2(
     duration_ema = torch.where(reset[:, None], torch.zeros_like(duration_ema), duration_ema)
     seen = torch.where(reset[:, None], torch.zeros_like(seen), seen)
 
-    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    alpha = _adaptive_ema_alpha(
+        env,
+        tau_s,
+        root_x,
+        sensor_cfg,
+        ema_cycle_count,
+        cycle_duration_smoothing_cycles,
+        min_cycle_duration_s,
+        max_cycle_duration_s,
+        min_tau_s,
+        max_tau_s,
+    )
     for foot_i in range(first_contact.shape[1]):
         touchdown = first_contact[:, foot_i]
         alternating = (last_foot >= 0) & (last_foot != foot_i)
@@ -973,6 +1250,206 @@ def swing_foot_overtake_l1(
     return left_penalty + right_penalty
 
 
+def _signed_swing_step_lead(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    feet_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    root_pos_w = asset.data.root_pos_w[:, None, :]
+    root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
+    feet_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (feet_pos_w - root_pos_w).reshape(-1, 3)).reshape(
+        env.num_envs, len(asset_cfg.body_ids), 3
+    )
+
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    in_air = ~in_contact
+    single_stance = torch.sum(in_contact.int(), dim=1) == 1
+    left_swing = in_air[:, 0] & in_contact[:, 1] & single_stance
+    right_swing = in_air[:, 1] & in_contact[:, 0] & single_stance
+    swing_mask = torch.stack((left_swing, right_swing), dim=1)
+
+    left_lead = feet_pos_b[:, 0, 0] - feet_pos_b[:, 1, 0]
+    right_lead = feet_pos_b[:, 1, 0] - feet_pos_b[:, 0, 0]
+    signed_lead = torch.stack((left_lead, right_lead), dim=1)
+    return signed_lead, swing_mask, asset.data.root_pos_w
+
+
+def dense_swing_step_length_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_length: float,
+    crossover_fraction: float,
+    linear_gain: float,
+    lambda_per_m: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+) -> torch.Tensor:
+    """Dense shaped reward for the swing foot leading the stance foot."""
+    signed_lead, swing_mask, _ = _signed_swing_step_lead(env, sensor_cfg, asset_cfg)
+    command = env.command_manager.get_command(command_name)
+    moving = torch.norm(command[:, :2], dim=1) > 0.05
+
+    target = max(target_length, 1.0e-6)
+    lead = torch.clamp(signed_lead, min=0.0, max=target)
+    lambda_value = 1.0 / target if lambda_per_m <= 0.0 else lambda_per_m
+    linear_value = (1.0 / target) if linear_gain <= 0.0 else linear_gain
+    crossover = min(max(crossover_fraction, 1.0e-6), 1.0)
+    crossover_lead = crossover * target
+    exp_at_crossover = max(math.exp(lambda_value * crossover_lead) - 1.0, 1.0e-6)
+    exp_gain = linear_value * crossover_lead / exp_at_crossover
+
+    shaped = linear_value * lead + exp_gain * torch.expm1(lambda_value * lead)
+    reward = torch.sum(shaped * swing_mask.float(), dim=1)
+    return reward * moving.float()
+
+
+def dense_foot_swing_speed_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_length: float,
+    swing_phase_fraction: float,
+    max_step_credit: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+) -> torch.Tensor:
+    """Water-level dense foot swing speed reward; pays only for new forward swing lead."""
+    signed_lead, swing_mask, _ = _signed_swing_step_lead(env, sensor_cfg, asset_cfg)
+    command = env.command_manager.get_command(command_name)
+    moving = torch.norm(command[:, :2], dim=1) > 0.05
+    cmd_vx = torch.clamp(command[:, 0], min=0.0)
+
+    target = max(target_length, 1.0e-6)
+    lead = torch.clamp(signed_lead, min=0.0, max=target)
+    best_name = "_kbot_dense_foot_swing_speed_best_lead"
+    best_lead = getattr(env, best_name, None)
+    if best_lead is None or best_lead.shape != lead.shape or best_lead.device != lead.device:
+        best_lead = torch.zeros_like(lead)
+
+    reset = (env.episode_length_buf <= 1).unsqueeze(1)
+    active = swing_mask & ~reset
+    best_lead = torch.where(active, best_lead, torch.zeros_like(best_lead))
+    new_progress = torch.clamp(lead - best_lead, min=0.0) * active.float()
+
+    phase_fraction = max(swing_phase_fraction, 1.0e-6)
+    target_progress = torch.clamp(cmd_vx * env.step_dt / phase_fraction, min=1.0e-4).unsqueeze(1)
+    credit = torch.clamp(new_progress / target_progress, min=0.0, max=max_step_credit)
+    reward = torch.sum(credit, dim=1) * moving.float()
+
+    best_lead = torch.where(active, torch.maximum(best_lead, lead), torch.zeros_like(best_lead))
+    setattr(env, best_name, best_lead)
+    return reward
+
+
+def stance_foot_retreat_l1(
+    env: ManagerBasedRLEnv,
+    retreat_epsilon: float,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+) -> torch.Tensor:
+    """One-shot penalty when a contacted foot retreats behind its touchdown x."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    foot_x = asset.data.body_pos_w[:, asset_cfg.body_ids, 0]
+
+    touchdown_x_name = "_kbot_stance_retreat_touchdown_x"
+    retreat_seen_name = "_kbot_stance_retreat_seen"
+    touchdown_x = getattr(env, touchdown_x_name, None)
+    retreat_seen = getattr(env, retreat_seen_name, None)
+    if touchdown_x is None or touchdown_x.shape != foot_x.shape or touchdown_x.device != foot_x.device:
+        touchdown_x = foot_x.clone()
+    if retreat_seen is None or retreat_seen.shape != in_contact.shape or retreat_seen.device != in_contact.device:
+        retreat_seen = torch.zeros_like(in_contact)
+
+    reset = (env.episode_length_buf <= 1).unsqueeze(1)
+    touchdown_x = torch.where(reset, foot_x, touchdown_x)
+    retreat_seen = torch.where(reset, torch.zeros_like(retreat_seen), retreat_seen)
+
+    touchdown_x = torch.where(first_contact, foot_x, touchdown_x)
+    retreat_seen = torch.where(first_contact | ~in_contact, torch.zeros_like(retreat_seen), retreat_seen)
+
+    retreated = in_contact & ~retreat_seen & (foot_x < (touchdown_x - retreat_epsilon))
+    penalty = torch.sum(retreated.float(), dim=1)
+    retreat_seen = retreat_seen | retreated
+
+    moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
+    setattr(env, touchdown_x_name, touchdown_x)
+    setattr(env, retreat_seen_name, retreat_seen)
+    return penalty * moving.float()
+
+
+def dense_swing_foot_target_location_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_length: float,
+    target_left_y: float,
+    target_right_y: float,
+    x_scale: float,
+    y_scale: float,
+    minimum_height: float,
+    max_tilt: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+) -> torch.Tensor:
+    """Dense swing reward for moving the foot toward takeoff x plus target stride and lane."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+
+    previous_contact_name = "_kbot_swing_target_previous_contact"
+    takeoff_x_name = "_kbot_swing_target_takeoff_x"
+    has_takeoff_name = "_kbot_swing_target_has_takeoff"
+    previous_contact = getattr(env, previous_contact_name, None)
+    takeoff_x = getattr(env, takeoff_x_name, None)
+    has_takeoff = getattr(env, has_takeoff_name, None)
+    if previous_contact is None or previous_contact.shape != in_contact.shape or previous_contact.device != in_contact.device:
+        previous_contact = in_contact.clone()
+    if takeoff_x is None or takeoff_x.shape != foot_pos_w[:, :, 0].shape or takeoff_x.device != foot_pos_w.device:
+        takeoff_x = foot_pos_w[:, :, 0].clone()
+    if has_takeoff is None or has_takeoff.shape != in_contact.shape or has_takeoff.device != in_contact.device:
+        has_takeoff = torch.zeros_like(in_contact)
+
+    reset = (env.episode_length_buf <= 1).unsqueeze(1)
+    previous_contact = torch.where(reset, in_contact, previous_contact)
+    takeoff_x = torch.where(reset, foot_pos_w[:, :, 0], takeoff_x)
+    has_takeoff = torch.where(reset, torch.zeros_like(has_takeoff), has_takeoff)
+
+    takeoff = previous_contact & ~in_contact
+    takeoff_x = torch.where(takeoff, foot_pos_w[:, :, 0], takeoff_x)
+    has_takeoff = torch.where(takeoff, torch.ones_like(has_takeoff), has_takeoff)
+
+    env_origins = getattr(env.scene, "env_origins", None)
+    if env_origins is None:
+        origin_y = torch.zeros(env.num_envs, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+    else:
+        origin_y = env_origins[:, 1].to(dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+    target_y = torch.stack((origin_y + target_left_y, origin_y + target_right_y), dim=1)
+    target_x = takeoff_x + target_length
+    x_error = (foot_pos_w[:, :, 0] - target_x) / max(x_scale, 1.0e-6)
+    y_error = (foot_pos_w[:, :, 1] - target_y) / max(y_scale, 1.0e-6)
+    target_reward = torch.exp(-(torch.square(x_error) + torch.square(y_error)))
+
+    swing_active = ~in_contact & has_takeoff
+    reward = torch.sum(target_reward * swing_active.float(), dim=1)
+    has_takeoff = torch.where(in_contact, torch.zeros_like(has_takeoff), has_takeoff)
+
+    moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
+    upright = _upright_health_gate(env, minimum_height, max_tilt, asset_cfg)
+    setattr(env, previous_contact_name, in_contact)
+    setattr(env, takeoff_x_name, takeoff_x)
+    setattr(env, has_takeoff_name, has_takeoff)
+    return reward * moving.float() * upright
+
+
 def foot_parallel_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
@@ -1151,6 +1628,13 @@ def joint_position_ema_l2(
     env: ManagerBasedRLEnv,
     tau_s: float,
     asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg | None = None,
+    ema_cycle_count: float = 0.0,
+    cycle_duration_smoothing_cycles: float = 5.0,
+    min_cycle_duration_s: float = 0.25,
+    max_cycle_duration_s: float = 2.0,
+    min_tau_s: float = 0.75,
+    max_tau_s: float = 10.0,
 ) -> torch.Tensor:
     """Penalize selected joints holding a persistent offset from neutral."""
     asset = env.scene[asset_cfg.name]
@@ -1160,7 +1644,18 @@ def joint_position_ema_l2(
     if ema is None or ema.shape != joint_error.shape or ema.device != joint_error.device:
         ema = torch.zeros_like(joint_error)
 
-    alpha = min(max(env.step_dt / max(tau_s, 1.0e-6), 0.0), 1.0)
+    alpha = _adaptive_ema_alpha(
+        env,
+        tau_s,
+        joint_error,
+        sensor_cfg,
+        ema_cycle_count,
+        cycle_duration_smoothing_cycles,
+        min_cycle_duration_s,
+        max_cycle_duration_s,
+        min_tau_s,
+        max_tau_s,
+    ).unsqueeze(1)
     reset = (env.episode_length_buf <= 1).unsqueeze(1)
     ema = torch.where(reset, joint_error, (1.0 - alpha) * ema + alpha * joint_error)
     setattr(env, buffer_name, ema)

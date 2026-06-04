@@ -167,6 +167,16 @@ def _cadence_hz(rows: list[dict]) -> float:
     return 1.0 / duration if duration > 1.0e-6 else 0.0
 
 
+def _duration_ema(rows: list[dict], key: str, smoothing_cycles: float) -> float:
+    if not rows:
+        return 0.0
+    alpha = 1.0 / max(smoothing_cycles, 1.0e-6)
+    ema = float(rows[0][key])
+    for row in rows[1:]:
+        ema = (1.0 - alpha) * ema + alpha * float(row[key])
+    return ema
+
+
 def _fraction(rows: list[dict], key: str) -> float:
     if not rows:
         return 0.0
@@ -637,6 +647,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     cycle_lengths = [row["cycle_length_m"] for row in cycles]
     cycle_advances = [row["root_advance_m"] for row in cycles]
     cycle_durations = [row["duration_s"] for row in cycles]
+    cycle_duration_ema_s = _duration_ema(cycles, "duration_s", float(args_cli.cycle_window))
+    cycle_duration_last_window_s = _last_mean(cycles, "duration_s", args_cli.cycle_window)
+    cycle_duration_ema_error_s = cycle_duration_ema_s - cycle_duration_last_window_s
     left_cycle_duration_last5 = _last_mean(left_cycles, "duration_s", 5)
     right_cycle_duration_last5 = _last_mean(right_cycles, "duration_s", 5)
     left_step_duration_last5 = _last_mean(left_steps, "duration_s", 5)
@@ -749,6 +762,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "cycle_root_advance_mean_m": float(np.mean(cycle_advances)) if cycle_advances else 0.0,
         "cycle_duration_mean_s": float(np.mean(cycle_durations)) if cycle_durations else 0.0,
         "cycle_duration_std_s": _std(cycles, "duration_s"),
+        "cycle_duration_ema_abs_error_s": abs(cycle_duration_ema_error_s),
+        "cycle_duration_ema_minus_last_window_s": cycle_duration_ema_error_s,
+        "cycle_duration_ema_s": cycle_duration_ema_s,
+        "cycle_duration_last_window_s": cycle_duration_last_window_s,
         "cycle_cadence_hz": cycle_cadence_hz,
         "left_cycle_cadence_hz": left_cycle_cadence_hz,
         "right_cycle_cadence_hz": right_cycle_cadence_hz,

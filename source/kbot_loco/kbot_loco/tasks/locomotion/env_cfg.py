@@ -1356,135 +1356,323 @@ class KBotForwardFlatV25S42ChatterFrom648CompatEnvCfg(KBotForwardFlatV25PoseGait
 
 @configclass
 class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648CompatEnvCfg):
-    """V3 scratch restart using the frozen model_648 reward topology.
+    """V3 scratch restart from the frozen model_648 reward topology.
 
     V3 intentionally starts from the code path that trained the V2.5
     `model_648.pt` seed, but as a fresh iteration-0 policy. It does not inherit
-    the later S4 step-gate/cadence/chatter reward terms. The explicit weight
-    assignments below intentionally match the 648-compatible baseline so this
-    task behaves the same until those numbers are hand-tuned.
+    the later S4 step-gate/cadence/chatter reward terms. The tables below are
+    the current hand-tuned V3 surface; keep weights grouped by theme, then
+    alphabetized by reward name inside each theme, so changes are easy to
+    review and revert.
     """
 
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        # V3 tuning block. These values match the saved model_648 reward
-        # weights; edit only this block when making hand-tuned V3 branches.
+        # V3 tuning block. Weight order is theme first, then A-to-Z inside each
+        # theme. Keep theme headings stable so hand tuning stays searchable and
+        # diff-friendly.
+        #
+        # Edit rules:
+        # - Existing reward weight only: add/edit the name in the matching
+        #   reward_weight_groups theme.
+        # - Existing reward function override: add the same name in reward_functions.
+        # - Existing reward params: add the same name in reward_params.
+        # - Brand-new reward term: add a full RewTerm in new_reward_terms and
+        #   its editable weight in the matching reward_weight_groups theme.
+        # - If a reward fits multiple themes, choose the one that describes the
+        #   main behavior you are tuning, and keep the name alphabetized there.
         self.commands.base_velocity.ranges.lin_vel_x = (0.75, 0.75)
-        self.rewards.track_lin_vel_xy_exp.func = mdp.upright_gated_track_lin_vel_xy_exp
-        self.rewards.track_lin_vel_xy_exp.params["minimum_height"] = 0.76
-        self.rewards.track_lin_vel_xy_exp.params["max_tilt"] = 0.45
-        self.rewards.track_lin_vel_xy_exp.weight = 15.0
-        self.rewards.track_ang_vel_z_exp.weight = 1.0
-        self.rewards.lin_vel_z_l2.weight = -2.0
-        self.rewards.ang_vel_xy_l2.weight = -0.25
-        self.rewards.dof_torques_l2.weight = -5.0e-5
-        self.rewards.dof_acc_l2.weight = -1.0e-7
-        self.rewards.action_rate_l2.weight = -0.09
-        self.rewards.feet_air_time.weight = 1.0
-        self.rewards.undesired_contacts.weight = -2.0
-        self.rewards.flat_orientation_l2.weight = -20.0
-        self.rewards.dof_pos_limits.weight = -2.0
-        self.rewards.alive.weight = 1.0
-        self.rewards.base_height_l2.weight = -35.0
-        self.rewards.alternating_foot_phase.weight = 0.18
-        self.rewards.lateral_velocity_l2.weight = -20.0
-        self.rewards.yaw_rate_l2.weight = -20.0
-        self.rewards.root_lateral_tilt_l2.weight = -90.0
-        self.rewards.root_lateral_tilt_ema_l2.weight = -12000.0
-        self.rewards.signed_joint_pair_ema_symmetry_l2 = RewTerm(
-            func=mdp.signed_joint_pair_ema_symmetry_l2,
-            weight=-90.0,
-            params={
-                "tau_s": 1.0,
-                "joint_pairs": [
-                    ("left_hip_pitch_04", "right_hip_pitch_04", -1.0),
-                    ("left_hip_roll_03", "right_hip_roll_03", -1.0),
-                    ("left_hip_yaw_03", "right_hip_yaw_03", -1.0),
-                    ("left_knee_04", "right_knee_04", -1.0),
-                    ("left_ankle_02", "right_ankle_02", -1.0),
-                ],
-            },
+        self.terminations.low_body.params["minimum_height"] = float(os.getenv("KBOT_LOW_BODY_TERMINATION_HEIGHT", "0.65"))
+
+        reward_weight_groups = (
+            (
+                "action_joint_regularization",
+                {
+                    "action_rate_l2": -0.09,
+                    "centered_joint_target_position_l2": 0.0,
+                    "dof_acc_l2": -1.0e-7,
+                    "dof_pos_limits": -2.0,
+                    "dof_torques_l2": -5.0e-5,
+                    "hip_roll_position_ema_5cycle_l2": 0.0,
+                    "hip_roll_yaw_position_ema_l2": 0.0,
+                    "hip_roll_yaw_position_l2": 0.0,
+                    "knee_extension_l1": 0.0,
+                    "signed_joint_pair_ema_symmetry_l2": -90.0,
+                    "stand_joint_position_l2": -1.0,
+                    "wobble_joint_vel_l2": -0.04,
+                },
+            ),
+            (
+                "forward_heading_tracking",
+                {
+                    "backward_velocity_l2": -100.0,
+                    "forward_velocity_below_l2": -6.0,
+                    "track_ang_vel_z_exp": 1.0,
+                    "track_lin_vel_xy_exp": 30.0,
+                    "world_forward_velocity_below_l2": -24.0,
+                    "world_forward_velocity_clip": 30.0,
+                    "world_heading_l2": -1000.0,
+                    "yaw_rate_l2": -200.0,
+                },
+            ),
+            (
+                "gait_step_timing",
+                {
+                    "alternating_foot_phase": 1.0,
+                    "alternating_step_symmetry_l2": -8.0,
+                    "contact_duty_symmetry_l2": -10.0,
+                    "dense_foot_swing_speed": 20.0,
+                    "dense_swing_foot_target_location_exp": 30.0,
+                    "dense_swing_step_length": 0.0,
+                    "feet_air_time": 2.0,
+                    "foot_sagittal_separation_l1": -12.0,
+                    "stance_foot_retreat_l1": -12.0,
+                    "swing_foot_overtake_l1": -150.0,
+                    "swing_sole_clearance": 1.0,
+                },
+            ),
+            (
+                "lateral_centerline_width",
+                {
+                    "foot_lateral_lane_l1": -4.0,
+                    "foot_lateral_lane_max_l1": -2.0,
+                    "foot_lateral_spacing_l1": -30.0,
+                    "foot_signed_lateral_clearance_l1": -24.0,
+                    "foot_sole_lateral_lane_max_l1": -100.0,
+                    "lateral_away_from_center_l2": -600.0,
+                    "lateral_velocity_l2": -20.0,
+                    "root_lateral_position_l2": -500.0,
+                },
+            ),
+            (
+                "leg_frontal_plane",
+                {
+                    "left_leg_frontal_plane_l1": -4.0,
+                    "leg_frontal_plane_l1": 0.0,
+                    "leg_frontal_sole_plane_max_l1": -14.0,
+                    "max_leg_frontal_plane_l1": -10.0,
+                    "right_leg_frontal_plane_l1": -4.0,
+                },
+            ),
+            (
+                "posture_survival",
+                {
+                    "alive": 1.0,
+                    "ang_vel_xy_l2": -0.25,
+                    "base_height_l2": -35.0,
+                    "flat_orientation_l2": -20.0,
+                    "lin_vel_z_l2": -2.0,
+                    "low_body_l2": -120.0,
+                    "root_lateral_tilt_ema_l2": -12000.0,
+                    "root_lateral_tilt_l2": -90.0,
+                    "termination_penalty": -1500.0,
+                    "undesired_contacts": -2.0,
+                    "upright_alive": 8.0,
+                },
+            ),
+            (
+                "sole_foot_orientation",
+                {
+                    "foot_flat_l2": 0.0,
+                    "foot_parallel_l2": -30.0,
+                    "foot_toe_in_l2": 0.0,
+                    "foot_world_parallel_l2": -10.0,
+                    "foot_world_parallel_max_l2": -10.0,
+                    "stance_foot_flat_l2": -1.2,
+                },
+            ),
         )
-        self.rewards.world_heading_l2.weight = -90.0
-        self.rewards.backward_velocity_l2.weight = -2.0
-        self.rewards.forward_velocity_below_l2.weight = -6.0
-        self.rewards.foot_lateral_spacing_l1.weight = -30.0
-        self.rewards.foot_signed_lateral_clearance_l1.weight = -24.0
-        self.rewards.foot_lateral_lane_l1.weight = -4.0
-        self.rewards.foot_lateral_lane_max_l1.weight = -2.0
-        self.rewards.leg_frontal_plane_l1.weight = 0.0
-        self.rewards.left_leg_frontal_plane_l1.weight = -4.0
-        self.rewards.right_leg_frontal_plane_l1.weight = -4.0
-        self.rewards.max_leg_frontal_plane_l1.weight = -10.0
-        self.rewards.foot_sagittal_separation_l1.weight = -12.0
-        self.rewards.foot_sagittal_separation_l1.params["target_length"] = 0.60
-        self.rewards.swing_foot_overtake_l1.weight = -150.0
-        self.rewards.swing_foot_overtake_l1.params["target_length"] = 0.30
-        self.rewards.foot_parallel_l2.weight = -30.0
-        self.rewards.foot_world_parallel_l2.weight = 0.0
-        self.rewards.foot_world_parallel_max_l2.weight = -0.8
-        self.rewards.foot_toe_in_l2.weight = 0.0
-        self.rewards.foot_flat_l2.weight = 0.0
-        self.rewards.stance_foot_flat_l2.weight = -1.2
-        self.rewards.wobble_joint_vel_l2.weight = -0.04
-        self.rewards.hip_roll_yaw_position_l2.weight = 0.0
-        self.rewards.hip_roll_yaw_position_ema_l2.weight = 0.0
-        self.rewards.low_body_l2.weight = -120.0
-        self.rewards.knee_extension_l1.weight = 0.0
-        self.rewards.termination_penalty.weight = -750.0
-        self.rewards.upright_alive.weight = 8.0
-        self.rewards.foot_sole_lateral_lane_max_l1.weight = -100.0
-        self.rewards.leg_frontal_sole_plane_max_l1.weight = -14.0
-        self.rewards.hip_roll_position_ema_5cycle_l2.weight = 0.0
-        self.rewards.centered_joint_target_position_l2.weight = 0.0
-        self.rewards.stand_joint_position_l2.weight = -1.0
-        self.rewards.world_forward_velocity_below_l2.weight = -24.0
-        self.rewards.forward_velocity_below_l2.params["minimum_velocity"] = 0.07
-        self.rewards.world_forward_velocity_below_l2.params["minimum_velocity"] = 0.05
-        self.rewards.world_forward_velocity_clip.func = mdp.upright_gated_world_forward_velocity_clip
-        self.rewards.world_forward_velocity_clip.params["minimum_height"] = 0.76
-        self.rewards.world_forward_velocity_clip.params["max_tilt"] = 0.45
-        self.rewards.world_forward_velocity_clip.weight = 15
-        self.rewards.world_forward_velocity_clip.params["max_velocity"] = 0.75
-        self.rewards.root_lateral_position_l2.weight = -200.0
-        self.rewards.lateral_away_from_center_l2 = RewTerm(func=mdp.lateral_away_from_center_l2, weight=-600.0)
-        self.rewards.contact_duty_symmetry_l2 = RewTerm(
-            func=mdp.contact_duty_symmetry_l2,
-            weight=-10.0,
-            params={
-                "tau_s": 1.0,
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+
+        reward_weights = {}
+        for _theme, weights in reward_weight_groups:
+            duplicate_names = reward_weights.keys() & weights.keys()
+            if duplicate_names:
+                raise ValueError(f"Duplicate V3 reward weights: {sorted(duplicate_names)}")
+            reward_weights.update(weights)
+
+        reward_functions = {
+            "track_lin_vel_xy_exp": mdp.upright_centerline_heading_gated_track_lin_vel_xy_exp,
+            "world_forward_velocity_clip": mdp.upright_centerline_heading_gated_world_forward_velocity_clip,
+        }
+
+        adaptive_cycle_ema_params = {
+            "cycle_duration_smoothing_cycles": 5.0,
+            "ema_cycle_count": 5.0,
+            "max_cycle_duration_s": 2.0,
+            "max_tau_s": 10.0,
+            "min_cycle_duration_s": 0.25,
+            "min_tau_s": 0.75,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+        }
+
+        reward_params = {
+            "dense_foot_swing_speed": {
+                "max_step_credit": 2.0,
+                "swing_phase_fraction": 0.375,
+                "target_length": 0.60,
             },
-        )
-        self.rewards.alternating_step_symmetry_l2 = RewTerm(
-            func=mdp.alternating_step_symmetry_l2,
-            weight=-8.0,
-            params={
-                "tau_s": 1.0,
-                "advance_scale": 0.08,
-                "duration_scale": 0.20,
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+            "dense_swing_step_length": {
+                "crossover_fraction": 0.66,
+                "lambda_per_m": 0.0,
+                "linear_gain": 0.0,
+                "target_length": 0.60,
             },
-        )
-        self.rewards.swing_sole_clearance = RewTerm(
-            func=mdp.swing_sole_clearance_reward,
-            weight=1.0,
-            params={
-                "command_name": "base_velocity",
-                "target_height": 0.010,
-                "drag_floor": 0.002,
-                "drag_weight": 3.0,
-                "minimum_height": 0.76,
+            "dense_swing_foot_target_location_exp": {
                 "max_tilt": 0.45,
-                "foot_local_offsets": [
-                    (0.03, -0.036528655, -0.0194786795),
-                    (0.03, -0.036528755, -0.0234786545),
-                ],
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
-                "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+                "minimum_height": 0.76,
+                "target_left_y": 0.1582,
+                "target_length": 0.60,
+                "target_right_y": -0.1582,
+                "x_scale": 0.15,
+                "y_scale": 0.08,
             },
-        )
+            "foot_sagittal_separation_l1": {
+                "target_length": 0.60,
+            },
+            "forward_velocity_below_l2": {
+                "minimum_velocity": 0.07,
+            },
+            "hip_roll_position_ema_5cycle_l2": adaptive_cycle_ema_params,
+            "hip_roll_yaw_position_ema_l2": adaptive_cycle_ema_params,
+            "root_lateral_tilt_ema_l2": adaptive_cycle_ema_params,
+            "stance_foot_retreat_l1": {
+                "retreat_epsilon": 0.002,
+            },
+            "swing_foot_overtake_l1": {
+                "target_length": 0.30,
+            },
+            "track_lin_vel_xy_exp": {
+                "centerline_target_y": 0.0,
+                "centerline_width_sq": 0.01,
+                "heading_width_sq": 0.01,
+                "max_tilt": 0.45,
+                "minimum_height": 0.76,
+            },
+            "world_forward_velocity_below_l2": {
+                "minimum_velocity": 0.05,
+            },
+            "world_forward_velocity_clip": {
+                "centerline_target_y": 0.0,
+                "centerline_width_sq": 0.01,
+                "heading_width_sq": 0.01,
+                "max_tilt": 0.45,
+                "max_velocity": 0.75,
+                "minimum_height": 0.76,
+            },
+        }
+
+        new_reward_terms = {
+            "alternating_step_symmetry_l2": RewTerm(
+                func=mdp.alternating_step_symmetry_l2,
+                weight=reward_weights["alternating_step_symmetry_l2"],
+                params={
+                    "advance_scale": 0.08,
+                    "duration_scale": 0.20,
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                    "tau_s": 1.0,
+                    **adaptive_cycle_ema_params,
+                },
+            ),
+            "contact_duty_symmetry_l2": RewTerm(
+                func=mdp.contact_duty_symmetry_l2,
+                weight=reward_weights["contact_duty_symmetry_l2"],
+                params={
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                    "tau_s": 1.0,
+                    **adaptive_cycle_ema_params,
+                },
+            ),
+            "dense_swing_step_length": RewTerm(
+                func=mdp.dense_swing_step_length_reward,
+                weight=reward_weights["dense_swing_step_length"],
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+                    "command_name": "base_velocity",
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                },
+            ),
+            "dense_foot_swing_speed": RewTerm(
+                func=mdp.dense_foot_swing_speed_reward,
+                weight=reward_weights["dense_foot_swing_speed"],
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+                    "command_name": "base_velocity",
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                },
+            ),
+            "dense_swing_foot_target_location_exp": RewTerm(
+                func=mdp.dense_swing_foot_target_location_exp,
+                weight=reward_weights["dense_swing_foot_target_location_exp"],
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+                    "command_name": "base_velocity",
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                },
+            ),
+            "lateral_away_from_center_l2": RewTerm(
+                func=mdp.lateral_away_from_center_l2,
+                weight=reward_weights["lateral_away_from_center_l2"],
+            ),
+            "signed_joint_pair_ema_symmetry_l2": RewTerm(
+                func=mdp.signed_joint_pair_ema_symmetry_l2,
+                weight=reward_weights["signed_joint_pair_ema_symmetry_l2"],
+                params={
+                    "joint_pairs": [
+                        ("left_hip_pitch_04", "right_hip_pitch_04", -1.0),
+                        ("left_hip_roll_03", "right_hip_roll_03", -1.0),
+                        ("left_hip_yaw_03", "right_hip_yaw_03", -1.0),
+                        ("left_knee_04", "right_knee_04", -1.0),
+                        ("left_ankle_02", "right_ankle_02", -1.0),
+                    ],
+                    "tau_s": 1.0,
+                    **adaptive_cycle_ema_params,
+                },
+            ),
+            "stance_foot_retreat_l1": RewTerm(
+                func=mdp.stance_foot_retreat_l1,
+                weight=reward_weights["stance_foot_retreat_l1"],
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+                    "command_name": "base_velocity",
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                },
+            ),
+            "swing_sole_clearance": RewTerm(
+                func=mdp.swing_sole_clearance_reward,
+                weight=reward_weights["swing_sole_clearance"],
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+                    "command_name": "base_velocity",
+                    "drag_floor": 0.002,
+                    "drag_weight": 3.0,
+                    "foot_local_offsets": [
+                        (0.03, -0.036528655, -0.0194786795),
+                        (0.03, -0.036528755, -0.0234786545),
+                    ],
+                    "max_tilt": 0.45,
+                    "minimum_height": 0.76,
+                    "over_height": 0.020,
+                    "over_penalty_cap": 4.0,
+                    "over_scale": 0.010,
+                    "over_weight": 1.0,
+                    "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["foot1", "foot3"]),
+                    "target_height": 0.010,
+                },
+            ),
+        }
+
+        for reward_name, reward_term in new_reward_terms.items():
+            setattr(self.rewards, reward_name, reward_term)
+        for reward_name, reward_func in reward_functions.items():
+            getattr(self.rewards, reward_name).func = reward_func
+        for reward_name, params in reward_params.items():
+            reward_term = getattr(self.rewards, reward_name)
+            if reward_term.params is None:
+                reward_term.params = {}
+            reward_term.params.update(params)
+        for reward_name, weight in reward_weights.items():
+            getattr(self.rewards, reward_name).weight = weight
 
 
 @configclass
