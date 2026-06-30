@@ -129,6 +129,22 @@ def _contact_body_ids(contact_sensor: ContactSensor, names: tuple[str, ...]) -> 
     return list(range(len(names)))
 
 
+BOXTOP3_SOLE_CENTER_OFFSETS = (
+    (0.03, -0.036528655, -0.0194786795),
+    (0.03, -0.036528755, -0.0234786545),
+)
+TOP4_SOLE_CENTER_OFFSETS = (
+    (0.030000005, 0.036528746, -0.023478652),
+    (0.030000015, -0.036528759, -0.023478660),
+)
+
+
+def _sole_center_offsets_for_task(task_name: str | None) -> tuple[tuple[float, float, float], ...]:
+    if task_name is not None and "top4" in task_name.lower():
+        return TOP4_SOLE_CENTER_OFFSETS
+    return BOXTOP3_SOLE_CENTER_OFFSETS
+
+
 def _paired_joint_symmetry(joint_names: list[str], samples: np.ndarray) -> dict[str, float]:
     sign_map = {"hip_pitch": 1.0, "hip_roll": -1.0, "hip_yaw": -1.0, "knee": -1.0, "ankle": -1.0}
     out: dict[str, float] = {}
@@ -482,7 +498,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     foot_body_ids = [body_names.index("foot1"), body_names.index("foot3")]
     knee_proxy_body_ids = [body_names.index("leg2_shell"), body_names.index("leg2_shell_2")]
     sole_center_offsets = torch.tensor(
-        [(0.03, -0.036528655, -0.0194786795), (0.03, -0.036528755, -0.0234786545)],
+        _sole_center_offsets_for_task(args_cli.task),
         dtype=robot.data.body_pos_w.dtype,
         device=robot.data.body_pos_w.device,
     )

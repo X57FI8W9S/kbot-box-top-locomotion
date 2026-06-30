@@ -65,10 +65,10 @@ RAW_USD_INITIAL_POSE_RAD = {
 
 parser = argparse.ArgumentParser(description="Probe KBot passive/held-pose stability outside the locomotion task.")
 parser.add_argument("--usd-path", type=Path, default=REPO_ROOT / "kbot3_2.usd")
-parser.add_argument("--pose", choices=("hand", "raw-usd-initial", "raw-usd-settled"), default="hand")
+parser.add_argument("--pose", choices=("zero", "hand", "raw-usd-initial", "raw-usd-settled"), default="hand")
 parser.add_argument(
     "--target-pose",
-    choices=("hand", "raw-usd-initial", "raw-usd-settled"),
+    choices=("zero", "hand", "raw-usd-initial", "raw-usd-settled"),
     default=None,
     help="Joint target pose. Defaults to --pose.",
 )
@@ -87,6 +87,8 @@ parser.add_argument(
 )
 parser.add_argument("--steps", type=int, default=200)
 parser.add_argument("--hold-target", action="store_true", help="Continuously command the hand pose as joint position target.")
+parser.add_argument("--initial-left-ankle", type=float, default=None, help="Override initial left ankle position in radians.")
+parser.add_argument("--initial-right-ankle", type=float, default=None, help="Override initial right ankle position in radians.")
 parser.add_argument("--target-left-ankle", type=float, default=None, help="Override target left ankle position in radians.")
 parser.add_argument("--target-right-ankle", type=float, default=None, help="Override target right ankle position in radians.")
 parser.add_argument("--realtime", action="store_true", help="Throttle the loop to roughly realtime for GUI inspection.")
@@ -140,6 +142,8 @@ def _quat_from_xyz_euler_deg(roll_deg: float, pitch_deg: float, yaw_deg: float, 
 
 
 def _joint_pose_rad(name: str) -> dict[str, float]:
+    if name == "zero":
+        return {joint_name: 0.0 for joint_name in HAND_POSE_DEG}
     if name == "raw-usd-settled":
         return RAW_USD_SETTLED_POSE_RAD
     if name == "raw-usd-initial":
@@ -252,8 +256,12 @@ def _make_robot_cfg(usd_path: Path) -> ArticulationCfg:
 
 def _set_hand_pose(robot: Articulation, device: str) -> torch.Tensor:
     joint_pos = torch.zeros((1, robot.num_joints), device=device)
-    initial_pose = _joint_pose_rad(args.pose)
+    initial_pose = dict(_joint_pose_rad(args.pose))
     target_pose = _joint_pose_rad(args.target_pose or args.pose)
+    if args.initial_left_ankle is not None:
+        initial_pose["left_ankle_02"] = args.initial_left_ankle
+    if args.initial_right_ankle is not None:
+        initial_pose["right_ankle_02"] = args.initial_right_ankle
     if args.target_left_ankle is not None:
         target_pose["left_ankle_02"] = args.target_left_ankle
     if args.target_right_ankle is not None:
@@ -284,11 +292,27 @@ def _set_hand_pose(robot: Articulation, device: str) -> torch.Tensor:
     return target_joint_pos
 
 
-def _raw_signed_sole_clearance(robot: Articulation) -> list[float]:
+BOXTOP3_SOLE_CENTER_OFFSETS = (
+    (0.03, -0.036528655, -0.0194786795),
+    (0.03, -0.036528755, -0.0234786545),
+)
+TOP4_SOLE_CENTER_OFFSETS = (
+    (0.030000005, 0.036528746, -0.023478652),
+    (0.030000015, -0.036528759, -0.023478660),
+)
+
+
+def _sole_center_offsets_for_usd(usd_path: Path) -> tuple[tuple[float, float, float], ...]:
+    if "top4" in usd_path.name.lower():
+        return TOP4_SOLE_CENTER_OFFSETS
+    return BOXTOP3_SOLE_CENTER_OFFSETS
+
+
+def _raw_signed_sole_clearance(robot: Articulation, usd_path: Path) -> list[float]:
     body_names = list(robot.body_names)
     foot_body_ids = [body_names.index("foot1"), body_names.index("foot3")]
     offsets = torch.tensor(
-        [(0.03, -0.036528655, -0.0194786795), (0.03, -0.036528755, -0.0234786545)],
+        _sole_center_offsets_for_usd(usd_path),
         dtype=robot.data.body_pos_w.dtype,
         device=robot.data.body_pos_w.device,
     )
@@ -322,12 +346,24 @@ def main() -> None:
         dict(zip(robot.joint_names, [round(float(v), 4) for v in target_joint_pos[0].tolist()])),
         flush=True,
     )
+    robot.update(sim_dt)
+    if args.report_sole_clearance:
+        reset_body_xyz = {
+            name: [round(float(v), 4) for v in robot.data.body_pos_w[0, body_id].tolist()]
+            for body_id, name in enumerate(robot.body_names)
+        }
+        print(
+            "ARTICULATION reset_raw_signed_sole_clearance_m=",
+            [round(value, 6) for value in _raw_signed_sole_clearance(robot, usd_path)],
+            flush=True,
+        )
+        print("ARTICULATION reset_body_xyz=", reset_body_xyz, flush=True)
     sim.step(render=not args.headless)
     robot.update(sim_dt)
 
     heights = [float(robot.data.root_pos_w[0, 2].item())]
     tilt_proxy = [0.0]
-    sole_clearances = [_raw_signed_sole_clearance(robot)] if args.report_sole_clearance else []
+    sole_clearances = [_raw_signed_sole_clearance(robot, usd_path)] if args.report_sole_clearance else []
     for _ in range(args.steps):
         if args.hold_target:
             robot.set_joint_position_target(target_joint_pos)
@@ -340,7 +376,7 @@ def main() -> None:
         gravity = robot.data.projected_gravity_b[0]
         tilt_proxy.append(max(abs(float(gravity[0].item())), abs(float(gravity[1].item()))))
         if args.report_sole_clearance:
-            sole_clearances.append(_raw_signed_sole_clearance(robot))
+            sole_clearances.append(_raw_signed_sole_clearance(robot, usd_path))
 
     body_z = dict(zip(robot.body_names, [round(float(v), 4) for v in robot.data.body_pos_w[0, :, 2].tolist()]))
     body_xyz = {

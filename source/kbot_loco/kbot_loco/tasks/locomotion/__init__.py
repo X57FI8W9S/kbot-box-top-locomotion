@@ -37,3 +37,23 @@ _register(
     "KBotForwardFlatV3HandTuned648EnvCfg",
     "KBotForwardFlatConservativePPORunnerCfg",
 )
+_register(
+    "Isaac-KBot-Forward-Flat-V3_1-Scratch-v0",
+    "KBotForwardFlatV31ScratchEnvCfg",
+    "KBotForwardFlatConservativePPORunnerCfg",
+)
+_register(
+    "Isaac-KBot-Forward-Flat-V4-Top4Starter-v0",
+    "KBotForwardFlatV4Top4StarterEnvCfg",
+    "KBotForwardFlatDecim2ConservativePPORunnerCfg",
+)
+_register(
+    "Isaac-KBot-Forward-Flat-V3_2-May31Top4-v0",
+    "KBotForwardFlatV32May31Top4EnvCfg",
+    "KBotForwardFlatConservativePPORunnerCfg",
+)
+_register(
+    "Isaac-KBot-Forward-Flat-V3_2-May31Top4-Stage2-v0",
+    "KBotForwardFlatV32May31Top4Stage2EnvCfg",
+    "KBotForwardFlatConservativePPORunnerCfg",
+)

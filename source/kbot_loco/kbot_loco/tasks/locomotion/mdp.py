@@ -14,11 +14,134 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-def gait_phase(env: ManagerBasedRLEnv, period_s: float) -> torch.Tensor:
+def _debounced_toe_off_gait_cycle_state(
+    env: ManagerBasedRLEnv,
+    period_s: float,
+    toe_off_debounce_s: float,
+    sensor_cfg: SceneEntityCfg,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Track the first debounced toe-off and return a toe-off-anchored phase."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+
+    left_contact = in_contact[:, 0]
+    right_contact = in_contact[:, 1]
+    now = env.episode_length_buf.float() * env.step_dt
+
+    f1_foot_name = "_kbot_gait_cycle_f1_foot_id"
+    start_time_name = "_kbot_gait_cycle_start_time"
+    f1_foot_id = getattr(env, f1_foot_name, None)
+    start_time = getattr(env, start_time_name, None)
+    if f1_foot_id is None or f1_foot_id.shape != now.shape or f1_foot_id.device != now.device:
+        f1_foot_id = torch.full_like(env.episode_length_buf, -1, dtype=torch.long, device=now.device)
+    if start_time is None or start_time.shape != now.shape or start_time.device != now.device:
+        start_time = torch.zeros_like(now)
+
+    reset = env.episode_length_buf <= 1
+    f1_foot_id = torch.where(reset, torch.full_like(f1_foot_id, -1), f1_foot_id)
+    start_time = torch.where(reset, now, start_time)
+
+    debounce_s = max(toe_off_debounce_s, 0.0)
+    unassigned = f1_foot_id < 0
+    left_takeoff = (~left_contact) & right_contact & (air_time[:, 0] >= debounce_s)
+    right_takeoff = (~right_contact) & left_contact & (air_time[:, 1] >= debounce_s)
+    assign_left = unassigned & left_takeoff & ~right_takeoff
+    assign_right = unassigned & right_takeoff & ~left_takeoff
+
+    assigned_air_time = torch.zeros_like(now)
+    assigned_air_time = torch.where(assign_left, air_time[:, 0], assigned_air_time)
+    assigned_air_time = torch.where(assign_right, air_time[:, 1], assigned_air_time)
+    f1_foot_id = torch.where(assign_left, torch.zeros_like(f1_foot_id), f1_foot_id)
+    f1_foot_id = torch.where(assign_right, torch.ones_like(f1_foot_id), f1_foot_id)
+    start_time = torch.where(assign_left | assign_right, now - assigned_air_time, start_time)
+
+    assigned = f1_foot_id >= 0
+    phase = torch.remainder((now - start_time) / max(period_s, 1.0e-6), 1.0)
+    phase = torch.where(assigned, phase, torch.zeros_like(phase))
+
+    setattr(env, f1_foot_name, f1_foot_id)
+    setattr(env, start_time_name, start_time)
+    return phase, f1_foot_id, assigned, in_contact
+
+
+def _gait_cycle_phase_state(
+    env: ManagerBasedRLEnv,
+    period_s: float,
+    swing_phase_fraction: float,
+    toe_off_debounce_s: float,
+    plant_phase_fraction: float,
+    sensor_cfg: SceneEntityCfg,
+) -> dict[str, torch.Tensor]:
+    """Return shared toe-off-anchored gait-cycle phase enables."""
+    phase, f1_foot_id, assigned, in_contact = _debounced_toe_off_gait_cycle_state(
+        env, period_s, toe_off_debounce_s, sensor_cfg
+    )
+    left_contact = in_contact[:, 0]
+    right_contact = in_contact[:, 1]
+    f1_is_left = f1_foot_id == 0
+    f1_contact = torch.where(f1_is_left, left_contact, right_contact)
+    f2_contact = torch.where(f1_is_left, right_contact, left_contact)
+
+    swing_fraction = min(max(swing_phase_fraction, 1.0e-6), 0.5)
+    plant_fraction = min(max(plant_phase_fraction, 0.0), 1.0)
+    plant_start = swing_fraction * (1.0 - plant_fraction)
+
+    f1_swing = assigned & (phase < plant_start)
+    f1_plant = assigned & (phase >= plant_start) & (phase < swing_fraction)
+    f1_shift = assigned & (phase >= swing_fraction) & (phase < 0.5)
+    f2_swing = assigned & (phase >= 0.5) & (phase < 0.5 + plant_start)
+    f2_plant = assigned & (phase >= 0.5 + plant_start) & (phase < 0.5 + swing_fraction)
+    f2_shift = assigned & (phase >= 0.5 + swing_fraction)
+
+    return {
+        "phase": phase,
+        "f1_foot_id": f1_foot_id,
+        "f1_is_left": f1_is_left,
+        "assigned": assigned,
+        "in_contact": in_contact,
+        "f1_contact": f1_contact,
+        "f2_contact": f2_contact,
+        "f1_swing": f1_swing,
+        "f1_plant": f1_plant,
+        "f1_shift": f1_shift,
+        "f2_swing": f2_swing,
+        "f2_plant": f2_plant,
+        "f2_shift": f2_shift,
+    }
+
+
+def _select_f1_f2(values: torch.Tensor, f1_is_left: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Select f1/f2 values from a left/right tensor."""
+    f1_value = torch.where(f1_is_left, values[:, 0], values[:, 1])
+    f2_value = torch.where(f1_is_left, values[:, 1], values[:, 0])
+    return f1_value, f2_value
+
+
+def gait_phase(
+    env: ManagerBasedRLEnv,
+    period_s: float,
+    sensor_cfg: SceneEntityCfg | None = None,
+    start_on_first_toe_off: bool = False,
+    toe_off_debounce_s: float = 0.0,
+) -> torch.Tensor:
     """Return sin/cos phase features for a nominal walking cycle."""
-    phase = torch.remainder(env.episode_length_buf.float() * env.step_dt / period_s, 1.0)
+    if start_on_first_toe_off:
+        if sensor_cfg is None:
+            raise ValueError("sensor_cfg is required when start_on_first_toe_off=True")
+        phase, f1_foot_id, assigned, _ = _debounced_toe_off_gait_cycle_state(
+            env, period_s, toe_off_debounce_s, sensor_cfg
+        )
+    else:
+        phase = torch.remainder(env.episode_length_buf.float() * env.step_dt / period_s, 1.0)
     phase_angle = 2.0 * torch.pi * phase
-    return torch.stack((torch.sin(phase_angle), torch.cos(phase_angle)), dim=1)
+    phase_features = torch.stack((torch.sin(phase_angle), torch.cos(phase_angle)), dim=1)
+    if start_on_first_toe_off:
+        side_sign = torch.where(f1_foot_id == 0, torch.ones_like(phase), -torch.ones_like(phase))
+        phase_features = phase_features * side_sign.unsqueeze(1)
+        phase_features = torch.where(assigned.unsqueeze(1), phase_features, torch.zeros_like(phase_features))
+    return phase_features
 
 
 def alternating_foot_phase_reward(
@@ -43,6 +166,128 @@ def alternating_foot_phase_reward(
     airborne = ~left_contact & ~right_contact
 
     return scheduled_single.float() + 0.25 * double_support.float() - airborne.float()
+
+
+def gait_cycle_support_reward(
+    env: ManagerBasedRLEnv,
+    period_s: float,
+    swing_phase_fraction: float,
+    toe_off_debounce_s: float,
+    plant_phase_fraction: float,
+    swing_double_support_reward: float,
+    shift_single_support_reward: float,
+    airborne_penalty: float,
+    wrong_single_penalty: float,
+    precycle_single_support_reward: float,
+    precycle_double_support_reward: float,
+    precycle_airborne_penalty: float,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Reward support contacts against a debounced, toe-off-anchored gait cycle.
+
+    Swing/shift phases are phase-latched: one wrong sampled contact state makes
+    the rest of that phase score as bad. Plant is a landing transition, so its
+    correct single-support credit fades to zero instead of latching.
+    """
+    state = _gait_cycle_phase_state(
+        env, period_s, swing_phase_fraction, toe_off_debounce_s, plant_phase_fraction, sensor_cfg
+    )
+    phase = state["phase"]
+    assigned = state["assigned"]
+    in_contact = state["in_contact"]
+    f1_contact = state["f1_contact"]
+    f2_contact = state["f2_contact"]
+
+    double_support = f1_contact & f2_contact
+    airborne = ~f1_contact & ~f2_contact
+    f1_single = f1_contact & ~f2_contact
+    f2_single = f2_contact & ~f1_contact
+
+    left_contact = in_contact[:, 0]
+    right_contact = in_contact[:, 1]
+    precycle_single = left_contact ^ right_contact
+    precycle_double = left_contact & right_contact
+    precycle_airborne = ~left_contact & ~right_contact
+    precycle_reward = (
+        precycle_single_support_reward * precycle_single.float()
+        + precycle_double_support_reward * precycle_double.float()
+        - precycle_airborne_penalty * precycle_airborne.float()
+    )
+
+    swing_fraction = min(max(swing_phase_fraction, 1.0e-6), 0.5)
+    plant_fraction = min(max(plant_phase_fraction, 0.0), 1.0)
+    plant_start = swing_fraction * (1.0 - plant_fraction)
+    plant_duration = max(swing_fraction - plant_start, 1.0e-6)
+    f1_plant_t = torch.clamp((phase - plant_start) / plant_duration, min=0.0, max=1.0)
+    f2_plant_t = torch.clamp((phase - (0.5 + plant_start)) / plant_duration, min=0.0, max=1.0)
+    f1_plant_single_credit = 1.0 - f1_plant_t
+    f2_plant_single_credit = 1.0 - f2_plant_t
+
+    ones = torch.ones_like(phase)
+    zeros = torch.zeros_like(phase)
+    bad = -ones
+    f1_swing_nominal = torch.where(f2_single, ones, bad)
+    f2_swing_nominal = torch.where(f1_single, ones, bad)
+    f1_shift_nominal = torch.where(double_support, ones, bad)
+    f2_shift_nominal = torch.where(double_support, ones, bad)
+
+    f1_plant_reward = torch.where(
+        f2_single,
+        f1_plant_single_credit,
+        torch.where(double_support, zeros, bad),
+    )
+    f2_plant_reward = torch.where(
+        f1_single,
+        f2_plant_single_credit,
+        torch.where(double_support, zeros, bad),
+    )
+
+    phase_id = torch.full_like(env.episode_length_buf, -1, dtype=torch.long, device=phase.device)
+    phase_id = torch.where(state["f1_swing"], torch.full_like(phase_id, 0), phase_id)
+    phase_id = torch.where(state["f1_plant"], torch.full_like(phase_id, 1), phase_id)
+    phase_id = torch.where(state["f1_shift"], torch.full_like(phase_id, 2), phase_id)
+    phase_id = torch.where(state["f2_swing"], torch.full_like(phase_id, 3), phase_id)
+    phase_id = torch.where(state["f2_plant"], torch.full_like(phase_id, 4), phase_id)
+    phase_id = torch.where(state["f2_shift"], torch.full_like(phase_id, 5), phase_id)
+
+    previous_phase_name = "_kbot_gait_cycle_support_previous_phase_id"
+    bad_phase_name = "_kbot_gait_cycle_support_bad_phase_seen"
+    previous_phase = getattr(env, previous_phase_name, None)
+    bad_phase_seen = getattr(env, bad_phase_name, None)
+    if previous_phase is None or previous_phase.shape != phase_id.shape or previous_phase.device != phase_id.device:
+        previous_phase = phase_id.clone()
+    if bad_phase_seen is None or bad_phase_seen.shape != assigned.shape or bad_phase_seen.device != assigned.device:
+        bad_phase_seen = torch.zeros_like(assigned)
+
+    reset = env.episode_length_buf <= 1
+    phase_changed = reset | (phase_id != previous_phase) | ~assigned
+    bad_phase_seen = torch.where(phase_changed, torch.zeros_like(bad_phase_seen), bad_phase_seen)
+
+    latch_active = state["f1_swing"] | state["f1_shift"] | state["f2_swing"] | state["f2_shift"]
+    wrong_now = (
+        (state["f1_swing"] & ~f2_single)
+        | (state["f1_shift"] & ~double_support)
+        | (state["f2_swing"] & ~f1_single)
+        | (state["f2_shift"] & ~double_support)
+    )
+    bad_phase_seen = bad_phase_seen | (latch_active & wrong_now)
+
+    swing_shift_reward = (
+        state["f1_swing"].float() * f1_swing_nominal
+        + state["f1_shift"].float() * f1_shift_nominal
+        + state["f2_swing"].float() * f2_swing_nominal
+        + state["f2_shift"].float() * f2_shift_nominal
+    )
+    swing_shift_reward = torch.where(latch_active & bad_phase_seen, bad, swing_shift_reward)
+    plant_reward = (
+        state["f1_plant"].float() * f1_plant_reward
+        + state["f2_plant"].float() * f2_plant_reward
+    )
+    reward = swing_shift_reward + plant_reward
+
+    setattr(env, previous_phase_name, phase_id)
+    setattr(env, bad_phase_name, bad_phase_seen)
+    return torch.where(assigned, reward, precycle_reward)
 
 
 def lateral_velocity_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -475,6 +720,10 @@ def swing_sole_clearance_reward(
     over_penalty_cap: float,
     minimum_height: float,
     max_tilt: float,
+    period_s: float,
+    swing_phase_fraction: float,
+    toe_off_debounce_s: float,
+    plant_phase_fraction: float,
     foot_local_offsets: list[tuple[float, float, float]],
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg,
@@ -494,9 +743,9 @@ def swing_sole_clearance_reward(
     if env_origins is not None:
         sole_height = sole_height - env_origins[:, None, 2]
 
-    left_swing = ~in_contact[:, 0] & in_contact[:, 1]
-    right_swing = ~in_contact[:, 1] & in_contact[:, 0]
-    single_support_swing = torch.stack((left_swing, right_swing), dim=1)
+    state = _gait_cycle_phase_state(
+        env, period_s, swing_phase_fraction, toe_off_debounce_s, plant_phase_fraction, sensor_cfg
+    )
     moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
     upright = _upright_health_gate(env, minimum_height, max_tilt, asset_cfg)
 
@@ -517,8 +766,15 @@ def swing_sole_clearance_reward(
     )
     over_penalty = torch.clamp(over_penalty, max=over_penalty_cap)
 
-    active = single_support_swing & moving[:, None] & (upright[:, None] > 0.0)
-    return torch.sum((clearance_reward - drag_penalty - over_penalty) * active.float(), dim=1)
+    per_foot_reward = clearance_reward - drag_penalty - over_penalty
+    f1_reward, f2_reward = _select_f1_f2(per_foot_reward, state["f1_is_left"])
+    f1_single_support_swing = ~state["f1_contact"] & state["f2_contact"]
+    f2_single_support_swing = ~state["f2_contact"] & state["f1_contact"]
+    reward = (
+        state["f1_swing"].float() * f1_single_support_swing.float() * f1_reward
+        + state["f2_swing"].float() * f2_single_support_swing.float() * f2_reward
+    )
+    return reward * moving.float() * upright
 
 
 def walking_cycle_cadence_above_l2(
@@ -875,6 +1131,87 @@ def alternating_step_symmetry_l2(
     return penalty * both_seen.float()
 
 
+def alternating_step_duration_ema_l1(
+    env: ManagerBasedRLEnv,
+    target_duration_s: float,
+    smoothing_events: float,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    minimum_command_speed: float = 0.05,
+    min_duration_s: float = 0.05,
+    max_duration_s: float = 2.0,
+    penalty_cap: float = 1.0,
+) -> torch.Tensor:
+    """Penalize the worst per-foot EMA of alternating-step duration error."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    device = first_contact.device
+    if first_contact.shape[1] < 2:
+        return torch.zeros(env.num_envs, dtype=torch.float32, device=device)
+
+    reference = env.episode_length_buf.to(dtype=torch.float32, device=device)
+    current_time = reference * env.step_dt
+
+    last_time_name = "_kbot_step_duration_target_touchdown_time"
+    last_foot_name = "_kbot_step_duration_target_touchdown_foot"
+    error_ema_name = "_kbot_step_duration_target_error_ema"
+    seen_name = "_kbot_step_duration_target_seen"
+
+    last_time = getattr(env, last_time_name, None)
+    last_foot = getattr(env, last_foot_name, None)
+    error_ema = getattr(env, error_ema_name, None)
+    seen = getattr(env, seen_name, None)
+
+    if last_time is None or last_time.shape != current_time.shape or last_time.device != current_time.device:
+        last_time = current_time.clone()
+    if last_foot is None or last_foot.shape != current_time.shape or last_foot.device != current_time.device:
+        last_foot = torch.full((env.num_envs,), -1, dtype=torch.long, device=device)
+    if error_ema is None or error_ema.shape != first_contact.shape or error_ema.device != current_time.device:
+        error_ema = torch.zeros(env.num_envs, first_contact.shape[1], dtype=current_time.dtype, device=device)
+    if seen is None or seen.shape != first_contact.shape or seen.device != current_time.device:
+        seen = torch.zeros(env.num_envs, first_contact.shape[1], dtype=torch.bool, device=device)
+
+    reset = env.episode_length_buf <= 1
+    last_time = torch.where(reset, current_time, last_time)
+    last_foot = torch.where(reset, torch.full_like(last_foot, -1), last_foot)
+    error_ema = torch.where(reset[:, None], torch.zeros_like(error_ema), error_ema)
+    seen = torch.where(reset[:, None], torch.zeros_like(seen), seen)
+
+    previous_time = last_time.clone()
+    previous_foot = last_foot.clone()
+    alpha = min(max(1.0 / max(smoothing_events, 1.0e-6), 0.0), 1.0)
+    target_duration = max(target_duration_s, 1.0e-6)
+
+    for foot_i in range(first_contact.shape[1]):
+        touchdown = first_contact[:, foot_i]
+        alternating = (previous_foot >= 0) & (previous_foot != foot_i)
+        valid_event = touchdown & alternating
+
+        duration = torch.clamp(current_time - previous_time, min=min_duration_s, max=max_duration_s)
+        event_error = torch.abs(duration - target_duration) / target_duration
+        if penalty_cap > 0.0:
+            event_error = torch.clamp(event_error, max=penalty_cap)
+
+        prior_seen = seen[:, foot_i]
+        updated = torch.where(prior_seen, (1.0 - alpha) * error_ema[:, foot_i] + alpha * event_error, event_error)
+        error_ema[:, foot_i] = torch.where(valid_event, updated, error_ema[:, foot_i])
+        seen[:, foot_i] = seen[:, foot_i] | valid_event
+
+        last_time = torch.where(touchdown, current_time, last_time)
+        last_foot = torch.where(touchdown, torch.full_like(last_foot, foot_i), last_foot)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.norm(command[:, :2], dim=1) > minimum_command_speed
+    both_seen = seen[:, 0] & seen[:, 1]
+    penalty = torch.maximum(error_ema[:, 0], error_ema[:, 1])
+
+    setattr(env, last_time_name, last_time)
+    setattr(env, last_foot_name, last_foot)
+    setattr(env, error_ema_name, error_ema)
+    setattr(env, seen_name, seen)
+    return penalty * both_seen.float() * moving.float()
+
+
 def supported_forward_velocity_reward(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -947,10 +1284,17 @@ def foot_lateral_spacing_l1(
     env: ManagerBasedRLEnv,
     target_width: float,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+    foot_local_offsets: list[tuple[float, float, float]] | None = None,
 ) -> torch.Tensor:
     """Penalize feet crossing or collapsing into a narrow support line."""
     asset = env.scene[asset_cfg.name]
     feet_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    if foot_local_offsets is not None:
+        foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+        local_offsets = torch.tensor(foot_local_offsets, dtype=feet_pos_w.dtype, device=feet_pos_w.device)
+        feet_pos_w = feet_pos_w + quat_apply(
+            foot_quat_w.reshape(-1, 4), local_offsets[None, :, :].expand(env.num_envs, -1, -1).reshape(-1, 3)
+        ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
     root_pos_w = asset.data.root_pos_w[:, None, :]
     root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
     feet_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (feet_pos_w - root_pos_w).reshape(-1, 3)).reshape(
@@ -964,10 +1308,17 @@ def foot_signed_lateral_clearance_l1(
     env: ManagerBasedRLEnv,
     minimum_width: float,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+    foot_local_offsets: list[tuple[float, float, float]] | None = None,
 ) -> torch.Tensor:
     """Penalize crossed feet by preserving left-foot/right-foot lateral ordering."""
     asset = env.scene[asset_cfg.name]
     feet_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    if foot_local_offsets is not None:
+        foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+        local_offsets = torch.tensor(foot_local_offsets, dtype=feet_pos_w.dtype, device=feet_pos_w.device)
+        feet_pos_w = feet_pos_w + quat_apply(
+            foot_quat_w.reshape(-1, 4), local_offsets[None, :, :].expand(env.num_envs, -1, -1).reshape(-1, 3)
+        ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
     root_pos_w = asset.data.root_pos_w[:, None, :]
     root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
     feet_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (feet_pos_w - root_pos_w).reshape(-1, 3)).reshape(
@@ -983,10 +1334,17 @@ def foot_lateral_lane_l1(
     target_right_y: float,
     tolerance: float,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+    foot_local_offsets: list[tuple[float, float, float]] | None = None,
 ) -> torch.Tensor:
     """Penalize feet leaving their neutral body-frame lateral lanes."""
     asset = env.scene[asset_cfg.name]
     feet_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    if foot_local_offsets is not None:
+        foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+        local_offsets = torch.tensor(foot_local_offsets, dtype=feet_pos_w.dtype, device=feet_pos_w.device)
+        feet_pos_w = feet_pos_w + quat_apply(
+            foot_quat_w.reshape(-1, 4), local_offsets[None, :, :].expand(env.num_envs, -1, -1).reshape(-1, 3)
+        ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
     root_pos_w = asset.data.root_pos_w[:, None, :]
     root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
     feet_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (feet_pos_w - root_pos_w).reshape(-1, 3)).reshape(
@@ -1004,10 +1362,17 @@ def foot_lateral_lane_max_l1(
     target_right_y: float,
     tolerance: float,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+    foot_local_offsets: list[tuple[float, float, float]] | None = None,
 ) -> torch.Tensor:
     """Penalize the worst foot's body-frame lateral lane error."""
     asset = env.scene[asset_cfg.name]
     feet_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    if foot_local_offsets is not None:
+        foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+        local_offsets = torch.tensor(foot_local_offsets, dtype=feet_pos_w.dtype, device=feet_pos_w.device)
+        feet_pos_w = feet_pos_w + quat_apply(
+            foot_quat_w.reshape(-1, 4), local_offsets[None, :, :].expand(env.num_envs, -1, -1).reshape(-1, 3)
+        ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
     root_pos_w = asset.data.root_pos_w[:, None, :]
     root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
     feet_pos_b = quat_apply_inverse(root_quat_w.reshape(-1, 4), (feet_pos_w - root_pos_w).reshape(-1, 3)).reshape(
@@ -1476,9 +1841,15 @@ def dense_swing_foot_target_location_exp(
     minimum_height: float,
     max_tilt: float,
     linear_progress_scale: float,
+    smooth_max_lambda: float,
     first_target_fraction: float,
+    period_s: float,
+    swing_phase_fraction: float,
+    toe_off_debounce_s: float,
+    plant_phase_fraction: float,
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+    foot_local_offsets: list[tuple[float, float, float]] | None = None,
 ) -> torch.Tensor:
     """Dense swing reward for moving the foot toward a world-frame target stride and lane."""
     asset = env.scene[asset_cfg.name]
@@ -1486,6 +1857,12 @@ def dense_swing_foot_target_location_exp(
     contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
     in_contact = contact_time > 0.0
     foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    if foot_local_offsets is not None:
+        foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+        local_offsets = torch.tensor(foot_local_offsets, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+        foot_pos_w = foot_pos_w + quat_apply(
+            foot_quat_w.reshape(-1, 4), local_offsets[None, :, :].expand(env.num_envs, -1, -1).reshape(-1, 3)
+        ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
 
     previous_contact_name = "_kbot_swing_target_previous_contact"
     takeoff_x_name = "_kbot_swing_target_takeoff_x"
@@ -1539,8 +1916,25 @@ def dense_swing_foot_target_location_exp(
         torch.zeros_like(progress_span),
     )
 
-    swing_active = ~in_contact & has_takeoff
-    reward = torch.sum((target_reward + linear_progress_scale * linear_progress) * swing_active.float(), dim=1)
+    state = _gait_cycle_phase_state(
+        env, period_s, swing_phase_fraction, toe_off_debounce_s, plant_phase_fraction, sensor_cfg
+    )
+    progress_reward = linear_progress_scale * linear_progress
+    smooth_lambda = max(smooth_max_lambda, 0.0)
+    if smooth_lambda > 0.0:
+        delta = target_reward - progress_reward
+        abs_delta = torch.abs(delta)
+        smooth = 0.5 * (target_reward + progress_reward) + torch.square(delta) / (4.0 * smooth_lambda) + (
+            0.25 * smooth_lambda
+        )
+        per_foot_reward = torch.where(abs_delta < smooth_lambda, smooth, torch.maximum(target_reward, progress_reward))
+    else:
+        per_foot_reward = torch.maximum(target_reward, progress_reward)
+    f1_reward, f2_reward = _select_f1_f2(per_foot_reward, state["f1_is_left"])
+    f1_has_takeoff, f2_has_takeoff = _select_f1_f2(has_takeoff, state["f1_is_left"])
+    f1_active = (state["f1_swing"] | state["f1_plant"]) & ~state["f1_contact"] & f1_has_takeoff
+    f2_active = (state["f2_swing"] | state["f2_plant"]) & ~state["f2_contact"] & f2_has_takeoff
+    reward = f1_active.float() * f1_reward + f2_active.float() * f2_reward
     touchdown = in_contact & has_takeoff
     first_target_done = first_target_done | torch.any(touchdown, dim=1)
     has_takeoff = torch.where(in_contact, torch.zeros_like(has_takeoff), has_takeoff)
@@ -1552,6 +1946,238 @@ def dense_swing_foot_target_location_exp(
     setattr(env, has_takeoff_name, has_takeoff)
     setattr(env, first_target_done_name, first_target_done)
     return reward * moving.float() * upright
+
+
+def gait_cycle_plant_water_level_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    period_s: float,
+    swing_phase_fraction: float,
+    toe_off_debounce_s: float,
+    plant_phase_fraction: float,
+    water_level: float,
+    minimum_water_level: float,
+    z_epsilon: float,
+    up_penalty: float,
+    retreat_epsilon: float,
+    retreat_scale: float,
+    retreat_penalty: float,
+    minimum_height: float,
+    max_tilt: float,
+    foot_local_offsets: list[tuple[float, float, float]],
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+    post_plant_up_penalty: float = 1.0,
+    post_plant_lift_penalty: float = 1.0,
+    outside_plant_touchdown_penalty: float = 1.0,
+    extra_swing_takeoff_penalty: float = 1.0,
+) -> torch.Tensor:
+    """Reward scheduled plant lowering and penalize phase-event microsteps."""
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    offsets = torch.tensor(foot_local_offsets, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+    sole_pos_w = foot_pos_w + quat_apply(foot_quat_w, offsets.unsqueeze(0).expand(env.num_envs, -1, -1))
+    sole_height = sole_pos_w[:, :, 2]
+    env_origins = getattr(env.scene, "env_origins", None)
+    if env_origins is not None:
+        sole_height = sole_height - env_origins[:, None, 2]
+    sole_x = sole_pos_w[:, :, 0]
+
+    state = _gait_cycle_phase_state(
+        env, period_s, swing_phase_fraction, toe_off_debounce_s, plant_phase_fraction, sensor_cfg
+    )
+    f1_height, f2_height = _select_f1_f2(sole_height, state["f1_is_left"])
+    f1_x, f2_x = _select_f1_f2(sole_x, state["f1_is_left"])
+    f1_first_contact, f2_first_contact = _select_f1_f2(first_contact, state["f1_is_left"])
+    f1_contact = state["f1_contact"]
+    f2_contact = state["f2_contact"]
+    reset = env.episode_length_buf <= 1
+
+    water = torch.full_like(f1_height, max(water_level, minimum_water_level))
+    floor = torch.full_like(f1_height, min(water_level, minimum_water_level))
+    span = torch.clamp(water - floor, min=1.0e-6)
+    f1_z_credit = torch.clamp(f1_height, min=floor, max=water)
+    f2_z_credit = torch.clamp(f2_height, min=floor, max=water)
+
+    min_z_f1_name = "_kbot_gait_cycle_plant_min_z_f1"
+    min_z_f2_name = "_kbot_gait_cycle_plant_min_z_f2"
+    prev_z_f1_name = "_kbot_gait_cycle_plant_prev_z_f1"
+    prev_z_f2_name = "_kbot_gait_cycle_plant_prev_z_f2"
+    peak_x_f1_name = "_kbot_gait_cycle_plant_peak_x_f1"
+    peak_x_f2_name = "_kbot_gait_cycle_plant_peak_x_f2"
+    plant_seen_f1_name = "_kbot_gait_cycle_plant_seen_f1"
+    plant_seen_f2_name = "_kbot_gait_cycle_plant_seen_f2"
+    post_up_seen_f1_name = "_kbot_gait_cycle_plant_post_up_seen_f1"
+    post_up_seen_f2_name = "_kbot_gait_cycle_plant_post_up_seen_f2"
+    post_lift_seen_f1_name = "_kbot_gait_cycle_plant_post_lift_seen_f1"
+    post_lift_seen_f2_name = "_kbot_gait_cycle_plant_post_lift_seen_f2"
+    prev_contact_f1_name = "_kbot_gait_cycle_plant_prev_contact_f1"
+    prev_contact_f2_name = "_kbot_gait_cycle_plant_prev_contact_f2"
+    swing_takeoff_seen_f1_name = "_kbot_gait_cycle_plant_swing_takeoff_seen_f1"
+    swing_takeoff_seen_f2_name = "_kbot_gait_cycle_plant_swing_takeoff_seen_f2"
+    min_z_f1 = getattr(env, min_z_f1_name, None)
+    min_z_f2 = getattr(env, min_z_f2_name, None)
+    prev_z_f1 = getattr(env, prev_z_f1_name, None)
+    prev_z_f2 = getattr(env, prev_z_f2_name, None)
+    peak_x_f1 = getattr(env, peak_x_f1_name, None)
+    peak_x_f2 = getattr(env, peak_x_f2_name, None)
+    plant_seen_f1 = getattr(env, plant_seen_f1_name, None)
+    plant_seen_f2 = getattr(env, plant_seen_f2_name, None)
+    post_up_seen_f1 = getattr(env, post_up_seen_f1_name, None)
+    post_up_seen_f2 = getattr(env, post_up_seen_f2_name, None)
+    post_lift_seen_f1 = getattr(env, post_lift_seen_f1_name, None)
+    post_lift_seen_f2 = getattr(env, post_lift_seen_f2_name, None)
+    prev_contact_f1 = getattr(env, prev_contact_f1_name, None)
+    prev_contact_f2 = getattr(env, prev_contact_f2_name, None)
+    swing_takeoff_seen_f1 = getattr(env, swing_takeoff_seen_f1_name, None)
+    swing_takeoff_seen_f2 = getattr(env, swing_takeoff_seen_f2_name, None)
+    if min_z_f1 is None or min_z_f1.shape != f1_height.shape or min_z_f1.device != f1_height.device:
+        min_z_f1 = water.clone()
+    if min_z_f2 is None or min_z_f2.shape != f2_height.shape or min_z_f2.device != f2_height.device:
+        min_z_f2 = water.clone()
+    if prev_z_f1 is None or prev_z_f1.shape != f1_height.shape or prev_z_f1.device != f1_height.device:
+        prev_z_f1 = f1_z_credit.clone()
+    if prev_z_f2 is None or prev_z_f2.shape != f2_height.shape or prev_z_f2.device != f2_height.device:
+        prev_z_f2 = f2_z_credit.clone()
+    if peak_x_f1 is None or peak_x_f1.shape != f1_x.shape or peak_x_f1.device != f1_x.device:
+        peak_x_f1 = f1_x.clone()
+    if peak_x_f2 is None or peak_x_f2.shape != f2_x.shape or peak_x_f2.device != f2_x.device:
+        peak_x_f2 = f2_x.clone()
+    if plant_seen_f1 is None or plant_seen_f1.shape != f1_contact.shape or plant_seen_f1.device != f1_contact.device:
+        plant_seen_f1 = torch.zeros_like(f1_contact)
+    if plant_seen_f2 is None or plant_seen_f2.shape != f2_contact.shape or plant_seen_f2.device != f2_contact.device:
+        plant_seen_f2 = torch.zeros_like(f2_contact)
+    if post_up_seen_f1 is None or post_up_seen_f1.shape != f1_contact.shape or post_up_seen_f1.device != f1_contact.device:
+        post_up_seen_f1 = torch.zeros_like(f1_contact)
+    if post_up_seen_f2 is None or post_up_seen_f2.shape != f2_contact.shape or post_up_seen_f2.device != f2_contact.device:
+        post_up_seen_f2 = torch.zeros_like(f2_contact)
+    if post_lift_seen_f1 is None or post_lift_seen_f1.shape != f1_contact.shape or post_lift_seen_f1.device != f1_contact.device:
+        post_lift_seen_f1 = torch.zeros_like(f1_contact)
+    if post_lift_seen_f2 is None or post_lift_seen_f2.shape != f2_contact.shape or post_lift_seen_f2.device != f2_contact.device:
+        post_lift_seen_f2 = torch.zeros_like(f2_contact)
+    if prev_contact_f1 is None or prev_contact_f1.shape != f1_contact.shape or prev_contact_f1.device != f1_contact.device:
+        prev_contact_f1 = f1_contact.clone()
+    if prev_contact_f2 is None or prev_contact_f2.shape != f2_contact.shape or prev_contact_f2.device != f2_contact.device:
+        prev_contact_f2 = f2_contact.clone()
+    if swing_takeoff_seen_f1 is None or swing_takeoff_seen_f1.shape != f1_contact.shape or swing_takeoff_seen_f1.device != f1_contact.device:
+        swing_takeoff_seen_f1 = torch.zeros_like(f1_contact)
+    if swing_takeoff_seen_f2 is None or swing_takeoff_seen_f2.shape != f2_contact.shape or swing_takeoff_seen_f2.device != f2_contact.device:
+        swing_takeoff_seen_f2 = torch.zeros_like(f2_contact)
+
+    f1_inactive_or_reset = reset | ~state["f1_plant"]
+    f2_inactive_or_reset = reset | ~state["f2_plant"]
+    min_z_f1 = torch.where(f1_inactive_or_reset, water, min_z_f1)
+    min_z_f2 = torch.where(f2_inactive_or_reset, water, min_z_f2)
+    prev_z_f1 = torch.where(reset | state["f1_swing"], f1_z_credit, prev_z_f1)
+    prev_z_f2 = torch.where(reset | state["f2_swing"], f2_z_credit, prev_z_f2)
+    peak_x_f1 = torch.where(f1_inactive_or_reset, f1_x, peak_x_f1)
+    peak_x_f2 = torch.where(f2_inactive_or_reset, f2_x, peak_x_f2)
+    prev_contact_f1 = torch.where(reset, f1_contact, prev_contact_f1)
+    prev_contact_f2 = torch.where(reset, f2_contact, prev_contact_f2)
+    plant_latch_reset_f1 = reset | state["f1_swing"]
+    plant_latch_reset_f2 = reset | state["f2_swing"]
+    plant_seen_f1 = torch.where(plant_latch_reset_f1, torch.zeros_like(plant_seen_f1), plant_seen_f1)
+    plant_seen_f2 = torch.where(plant_latch_reset_f2, torch.zeros_like(plant_seen_f2), plant_seen_f2)
+    post_up_seen_f1 = torch.where(plant_latch_reset_f1, torch.zeros_like(post_up_seen_f1), post_up_seen_f1)
+    post_up_seen_f2 = torch.where(plant_latch_reset_f2, torch.zeros_like(post_up_seen_f2), post_up_seen_f2)
+    post_lift_seen_f1 = torch.where(plant_latch_reset_f1, torch.zeros_like(post_lift_seen_f1), post_lift_seen_f1)
+    post_lift_seen_f2 = torch.where(plant_latch_reset_f2, torch.zeros_like(post_lift_seen_f2), post_lift_seen_f2)
+    swing_takeoff_seen_f1 = torch.where(
+        reset | ~state["f1_swing"], torch.zeros_like(swing_takeoff_seen_f1), swing_takeoff_seen_f1
+    )
+    swing_takeoff_seen_f2 = torch.where(
+        reset | ~state["f2_swing"], torch.zeros_like(swing_takeoff_seen_f2), swing_takeoff_seen_f2
+    )
+
+    f1_downward_credit = torch.clamp(min_z_f1 - f1_z_credit, min=0.0) / span
+    f2_downward_credit = torch.clamp(min_z_f2 - f2_z_credit, min=0.0) / span
+    f1_low_seen = min_z_f1 < (water - max(z_epsilon, 0.0))
+    f2_low_seen = min_z_f2 < (water - max(z_epsilon, 0.0))
+    f1_up_after_low = f1_low_seen & (f1_z_credit > (prev_z_f1 + max(z_epsilon, 0.0)))
+    f2_up_after_low = f2_low_seen & (f2_z_credit > (prev_z_f2 + max(z_epsilon, 0.0)))
+    f1_planted_now = state["f1_plant"] & (f1_contact | (f1_z_credit < (water - max(z_epsilon, 0.0))))
+    f2_planted_now = state["f2_plant"] & (f2_contact | (f2_z_credit < (water - max(z_epsilon, 0.0))))
+    plant_seen_f1 = plant_seen_f1 | f1_planted_now
+    plant_seen_f2 = plant_seen_f2 | f2_planted_now
+
+    updated_peak_x_f1 = torch.where(state["f1_plant"], torch.maximum(peak_x_f1, f1_x), f1_x)
+    updated_peak_x_f2 = torch.where(state["f2_plant"], torch.maximum(peak_x_f2, f2_x), f2_x)
+    f1_retreat_excess = torch.clamp(updated_peak_x_f1 - f1_x - max(retreat_epsilon, 0.0), min=0.0)
+    f2_retreat_excess = torch.clamp(updated_peak_x_f2 - f2_x - max(retreat_epsilon, 0.0), min=0.0)
+    f1_retreat_score = torch.clamp(f1_retreat_excess / max(retreat_scale, 1.0e-6), min=0.0, max=1.0)
+    f2_retreat_score = torch.clamp(f2_retreat_excess / max(retreat_scale, 1.0e-6), min=0.0, max=1.0)
+
+    f1_reward_active = state["f1_plant"] & ~state["f1_contact"]
+    f2_reward_active = state["f2_plant"] & ~state["f2_contact"]
+    f1_reward = (
+        f1_downward_credit
+        - up_penalty * f1_up_after_low.float()
+        - retreat_penalty * f1_retreat_score
+    ) * f1_reward_active.float()
+    f2_reward = (
+        f2_downward_credit
+        - up_penalty * f2_up_after_low.float()
+        - retreat_penalty * f2_retreat_score
+    ) * f2_reward_active.float()
+
+    f1_hold_active = state["assigned"] & plant_seen_f1 & ~state["f1_plant"] & ~state["f1_swing"]
+    f2_hold_active = state["assigned"] & plant_seen_f2 & ~state["f2_plant"] & ~state["f2_swing"]
+    f1_post_up = f1_hold_active & ~post_up_seen_f1 & (f1_z_credit > (prev_z_f1 + max(z_epsilon, 0.0)))
+    f2_post_up = f2_hold_active & ~post_up_seen_f2 & (f2_z_credit > (prev_z_f2 + max(z_epsilon, 0.0)))
+    f1_post_lift = f1_hold_active & ~post_lift_seen_f1 & ~f1_contact
+    f2_post_lift = f2_hold_active & ~post_lift_seen_f2 & ~f2_contact
+    post_up_seen_f1 = post_up_seen_f1 | f1_post_up
+    post_up_seen_f2 = post_up_seen_f2 | f2_post_up
+    post_lift_seen_f1 = post_lift_seen_f1 | f1_post_lift
+    post_lift_seen_f2 = post_lift_seen_f2 | f2_post_lift
+
+    f1_outside_plant_touchdown = state["assigned"] & ~reset & f1_first_contact & ~state["f1_plant"]
+    f2_outside_plant_touchdown = state["assigned"] & ~reset & f2_first_contact & ~state["f2_plant"]
+    f1_takeoff = state["assigned"] & ~reset & state["f1_swing"] & prev_contact_f1 & ~f1_contact
+    f2_takeoff = state["assigned"] & ~reset & state["f2_swing"] & prev_contact_f2 & ~f2_contact
+    f1_extra_takeoff = f1_takeoff & swing_takeoff_seen_f1
+    f2_extra_takeoff = f2_takeoff & swing_takeoff_seen_f2
+    swing_takeoff_seen_f1 = swing_takeoff_seen_f1 | f1_takeoff
+    swing_takeoff_seen_f2 = swing_takeoff_seen_f2 | f2_takeoff
+
+    event_penalty = (
+        post_plant_up_penalty * (f1_post_up.float() + f2_post_up.float())
+        + post_plant_lift_penalty * (f1_post_lift.float() + f2_post_lift.float())
+        + outside_plant_touchdown_penalty
+        * (f1_outside_plant_touchdown.float() + f2_outside_plant_touchdown.float())
+        + extra_swing_takeoff_penalty * (f1_extra_takeoff.float() + f2_extra_takeoff.float())
+    ) / max(env.step_dt, 1.0e-6)
+
+    updated_min_z_f1 = torch.where(state["f1_plant"], torch.minimum(min_z_f1, f1_z_credit), water)
+    updated_min_z_f2 = torch.where(state["f2_plant"], torch.minimum(min_z_f2, f2_z_credit), water)
+    updated_prev_z_f1 = torch.where(state["f1_plant"], f1_z_credit, f1_z_credit)
+    updated_prev_z_f2 = torch.where(state["f2_plant"], f2_z_credit, f2_z_credit)
+    setattr(env, min_z_f1_name, updated_min_z_f1)
+    setattr(env, min_z_f2_name, updated_min_z_f2)
+    setattr(env, prev_z_f1_name, updated_prev_z_f1)
+    setattr(env, prev_z_f2_name, updated_prev_z_f2)
+    setattr(env, peak_x_f1_name, updated_peak_x_f1)
+    setattr(env, peak_x_f2_name, updated_peak_x_f2)
+    setattr(env, plant_seen_f1_name, plant_seen_f1)
+    setattr(env, plant_seen_f2_name, plant_seen_f2)
+    setattr(env, post_up_seen_f1_name, post_up_seen_f1)
+    setattr(env, post_up_seen_f2_name, post_up_seen_f2)
+    setattr(env, post_lift_seen_f1_name, post_lift_seen_f1)
+    setattr(env, post_lift_seen_f2_name, post_lift_seen_f2)
+    setattr(env, prev_contact_f1_name, f1_contact)
+    setattr(env, prev_contact_f2_name, f2_contact)
+    setattr(env, swing_takeoff_seen_f1_name, swing_takeoff_seen_f1)
+    setattr(env, swing_takeoff_seen_f2_name, swing_takeoff_seen_f2)
+
+    moving = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.05
+    upright = _upright_health_gate(env, minimum_height, max_tilt, asset_cfg)
+    return (f1_reward + f2_reward - event_penalty) * moving.float() * upright
 
 
 def foot_parallel_l2(

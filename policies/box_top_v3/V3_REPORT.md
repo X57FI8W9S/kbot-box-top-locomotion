@@ -23,6 +23,21 @@ Current result: V3 has produced useful behaviors, but no keeper yet. The
 latest changed-weight run raised scalar reward by exploiting early
 bad-orientation termination, not by walking.
 
+## Training Launch Note
+
+When resuming from `model_n.pt` and asking for `model_m.pt`, compute the
+inclusive continuation length before launching. Set `--max_iterations` to
+`m - n + 1`, not `m - n`, so the first run saves `model_m.pt` directly instead
+of stopping one checkpoint short at `model_(m-1).pt`.
+
+Required procedure:
+
+```text
+1. Compute `target_iterations = m - n + 1`.
+2. Launch the resume once with `--max_iterations target_iterations`.
+3. Use the full path to the resulting `model_m.pt` for video and metrics.
+```
+
 ## Why V3 Exists
 
 V2.5 found a stable posed-start policy, but the best policy around

@@ -10,6 +10,7 @@ from isaaclab.assets.articulation import ArticulationCfg
 REPO_ROOT = Path(__file__).resolve().parents[5]
 KBOT_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top3.usd"
 KBOT_PADS_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top3_pads.usd"
+KBOT_TOP4_USD_PATH = REPO_ROOT / "assets" / "robot" / "usd" / "kbot_box_top4.usd"
 ISAACLAB_IMPLICIT_GAIN_SCALE = 57.3
 
 HIP_PITCH_KNEE_ACTUATOR_CFG = DCMotorCfg(
@@ -117,6 +118,32 @@ KBOT_CFG = ArticulationCfg(
             "right_knee_04": -0.75,
             "left_ankle_02": 0.0,
             "right_ankle_02": 0.0,
+        },
+    ),
+    actuators={
+        "hip_pitch_knee": HIP_PITCH_KNEE_ACTUATOR_CFG,
+        "hip_roll": HIP_ROLL_ACTUATOR_CFG,
+        "hip_yaw": HIP_YAW_ACTUATOR_CFG,
+        "ankles": ANKLE_ACTUATOR_CFG,
+    },
+    soft_joint_pos_limit_factor=0.95,
+)
+
+KBOT_TOP4_CFG = ArticulationCfg(
+    spawn=_spawn_cfg(KBOT_TOP4_USD_PATH),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.8565),
+        joint_pos={
+            "left_hip_pitch_04": 0.296467274,
+            "left_hip_roll_03": 0.000730005,
+            "left_hip_yaw_03": -0.000167742,
+            "left_knee_04": 0.527403533,
+            "left_ankle_02": -0.226248741,
+            "right_hip_pitch_04": -0.296534926,
+            "right_hip_roll_03": 0.000735207,
+            "right_hip_yaw_03": -0.000100786,
+            "right_knee_04": -0.528043807,
+            "right_ankle_02": 0.226889685,
         },
     ),
     actuators={

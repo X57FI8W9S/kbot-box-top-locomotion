@@ -47,6 +47,11 @@ class KBotForwardFlatConservativePPORunnerCfg(KBotForwardFlatPPORunnerCfg):
 
 
 @configclass
+class KBotForwardFlatDecim2ConservativePPORunnerCfg(KBotForwardFlatConservativePPORunnerCfg):
+    num_steps_per_env = 48
+
+
+@configclass
 class KBotForwardFlatFineTunePPORunnerCfg(KBotForwardFlatPPORunnerCfg):
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=0.05,

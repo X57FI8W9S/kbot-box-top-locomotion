@@ -19,6 +19,20 @@ import numpy as np
 
 
 REWARD_PREFIX = "Episode_Reward/"
+OUTPUT_DPI = 180
+STACK_ALPHA = 0.94
+SUBPIXEL_BAND_THRESHOLD_PX = 1.0
+FIGSIZE = (18, 9)
+
+
+def _vanimo_colormap():
+    try:
+        from cmcrameri import cm
+    except ImportError as exc:
+        raise RuntimeError(
+            "Could not import cmcrameri. Install it with `.venv/bin/python -m pip install cmcrameri`."
+        ) from exc
+    return cm.vanimo
 
 
 def _load_reward_scalars(run_dir: Path) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -93,6 +107,105 @@ def _split_terms(series: dict[str, np.ndarray], min_abs_mean: float, top_n: int 
     return positive, negative
 
 
+def _plot_stack_data(
+    series: dict[str, np.ndarray],
+    terms: list[str],
+    *,
+    positive: bool,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if not terms:
+        return None, None
+    if positive:
+        values = [np.clip(series[name], 0.0, None) for name in terms]
+    else:
+        values = [np.clip(series[name], None, 0.0) for name in terms]
+    stacked = np.cumsum(np.vstack(values), axis=0)
+    return np.vstack(values), stacked
+
+
+def _stack_total(stacked: np.ndarray | None, iterations: np.ndarray) -> np.ndarray:
+    if stacked is None:
+        return np.zeros_like(iterations, dtype=np.float64)
+    return stacked[-1]
+
+
+def _style_axes(ax, title: str) -> None:
+    ax.set_title(title)
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Weighted episode reward contribution")
+    ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.35)
+
+
+def _export_px_per_reward_unit(
+    iterations: np.ndarray,
+    positive_stack: np.ndarray | None,
+    negative_stack: np.ndarray | None,
+    total: np.ndarray,
+    title: str,
+) -> float:
+    """Estimate final PNG y pixels per reward unit for the current autoscale."""
+    fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
+
+    if positive_stack is not None:
+        base = np.zeros_like(iterations, dtype=np.float64)
+        for top in positive_stack:
+            ax.fill_between(iterations, base, top)
+            base = top
+
+    if negative_stack is not None:
+        base = np.zeros_like(iterations, dtype=np.float64)
+        for bottom in negative_stack:
+            ax.fill_between(iterations, base, bottom)
+            base = bottom
+
+    ax.plot(iterations, total, linewidth=3.0)
+    ax.axhline(0.0)
+    _style_axes(ax, title)
+    fig.canvas.draw()
+    ylim = ax.get_ylim()
+    axes_height_export_px = ax.get_window_extent().height * (OUTPUT_DPI / fig.dpi)
+    plt.close(fig)
+    return axes_height_export_px / (ylim[1] - ylim[0])
+
+
+def _mean_band_px(values: np.ndarray, *, positive: bool, px_per_unit: float) -> float:
+    if positive:
+        contribution = np.clip(values, 0.0, None)
+    else:
+        contribution = np.abs(np.clip(values, None, 0.0))
+    finite = contribution[np.isfinite(contribution)]
+    if finite.size == 0:
+        return 0.0
+    return float(np.mean(finite) * px_per_unit)
+
+
+def _split_vanimo_colors(
+    series: dict[str, np.ndarray],
+    terms: list[str],
+    *,
+    positive: bool,
+    px_per_unit: float,
+    subpixel_threshold_px: float,
+) -> dict[str, object]:
+    """Use one half of vanimo and flatten subpixel terms to the center color."""
+    cmap = _vanimo_colormap()
+    center = 0.50
+    extreme = 0.98 if positive else 0.02
+    center_color = cmap(center)
+    visible_terms = [
+        name
+        for name in terms
+        if _mean_band_px(series[name], positive=positive, px_per_unit=px_per_unit) > subpixel_threshold_px
+    ]
+    colors = {name: center_color for name in terms}
+    if len(visible_terms) == 1:
+        colors[visible_terms[0]] = cmap((center + extreme) * 0.5)
+    elif len(visible_terms) > 1:
+        ramp = cmap(np.linspace(center, extreme, len(visible_terms)))
+        colors.update(dict(zip(visible_terms, ramp)))
+    return colors
+
+
 def _plot_stack(
     iterations: np.ndarray,
     series: dict[str, np.ndarray],
@@ -101,49 +214,58 @@ def _plot_stack(
     output_path: Path,
     legend_path: Path,
     title: str,
+    subpixel_threshold_px: float,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(18, 9), constrained_layout=True)
+    positive_values, positive_stack = _plot_stack_data(series, positive_terms, positive=True)
+    negative_values, negative_stack = _plot_stack_data(series, negative_terms, positive=False)
+    positive_total = _stack_total(positive_stack, iterations)
+    negative_total = _stack_total(negative_stack, iterations)
+    total = positive_total + negative_total
+    px_per_unit = _export_px_per_reward_unit(iterations, positive_stack, negative_stack, total, title)
+
+    positive_colors = _split_vanimo_colors(
+        series,
+        positive_terms,
+        positive=True,
+        px_per_unit=px_per_unit,
+        subpixel_threshold_px=subpixel_threshold_px,
+    )
+    negative_colors = _split_vanimo_colors(
+        series,
+        negative_terms,
+        positive=False,
+        px_per_unit=px_per_unit,
+        subpixel_threshold_px=subpixel_threshold_px,
+    )
+
+    fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
     legend_entries: list[tuple[str, object]] = []
 
-    if positive_terms:
-        positive_values = [np.clip(series[name], 0.0, None) for name in positive_terms]
-        positive_stack = np.cumsum(np.vstack(positive_values), axis=0)
-        colors = plt.cm.Greens(np.linspace(0.30, 0.95, len(positive_terms)))
+    if positive_stack is not None:
         base = np.zeros_like(iterations, dtype=np.float64)
-        for name, top, color in zip(positive_terms, positive_stack, colors):
-            ax.fill_between(iterations, base, top, color=color, alpha=0.92)
-            legend_entries.append((name, Patch(facecolor=color, edgecolor="none", alpha=0.92)))
+        for name, top in zip(positive_terms, positive_stack):
+            color = positive_colors[name]
+            ax.fill_between(iterations, base, top, color=color, alpha=STACK_ALPHA)
+            legend_entries.append((name, Patch(facecolor=color, edgecolor="none", alpha=STACK_ALPHA)))
             base = top
-        positive_total = positive_stack[-1]
-    else:
-        positive_total = np.zeros_like(iterations, dtype=np.float64)
 
-    if negative_terms:
-        negative_values = [np.clip(series[name], None, 0.0) for name in negative_terms]
-        negative_stack = np.cumsum(np.vstack(negative_values), axis=0)
-        colors = plt.cm.GnBu(np.linspace(0.30, 0.95, len(negative_terms)))
+    if negative_stack is not None:
         base = np.zeros_like(iterations, dtype=np.float64)
-        for name, bottom, color in zip(negative_terms, negative_stack, colors):
-            ax.fill_between(iterations, base, bottom, color=color, alpha=0.92)
-            legend_entries.append((name, Patch(facecolor=color, edgecolor="none", alpha=0.92)))
+        for name, bottom in zip(negative_terms, negative_stack):
+            color = negative_colors[name]
+            ax.fill_between(iterations, base, bottom, color=color, alpha=STACK_ALPHA)
+            legend_entries.append((name, Patch(facecolor=color, edgecolor="none", alpha=STACK_ALPHA)))
             base = bottom
-        negative_total = negative_stack[-1]
-    else:
-        negative_total = np.zeros_like(iterations, dtype=np.float64)
 
-    total = positive_total + negative_total
     ax.plot(iterations, total, color="black", linewidth=3.0)
     legend_entries.append(("total", Line2D([0], [0], color="black", linewidth=3.0)))
     ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.8)
-    ax.set_title(title)
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Weighted episode reward contribution")
-    ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.35)
+    _style_axes(ax, title)
     labels = [label for label, _handle in legend_entries]
     handles = [handle for _label, handle in legend_entries]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=180, bbox_inches="tight")
+    fig.savefig(output_path, dpi=OUTPUT_DPI, bbox_inches="tight")
     plt.close(fig)
 
     legend_path.parent.mkdir(parents=True, exist_ok=True)
@@ -158,11 +280,16 @@ def _plot_stack(
         frameon=False,
         fontsize="small",
     )
-    legend_fig.savefig(legend_path, dpi=180, bbox_inches="tight")
+    legend_fig.savefig(legend_path, dpi=OUTPUT_DPI, bbox_inches="tight")
     plt.close(legend_fig)
 
 
-def plot_reward_components(run_dir: Path, min_abs_mean: float = 0.0, top_n: int | None = None) -> list[Path]:
+def plot_reward_components(
+    run_dir: Path,
+    min_abs_mean: float = 0.0,
+    top_n: int | None = None,
+    subpixel_threshold_px: float = SUBPIXEL_BAND_THRESHOLD_PX,
+) -> list[Path]:
     run_dir = run_dir.resolve()
     iterations, series = _load_reward_scalars(run_dir)
     positive_terms, negative_terms = _split_terms(series, min_abs_mean, top_n)
@@ -182,7 +309,8 @@ def plot_reward_components(run_dir: Path, min_abs_mean: float = 0.0, top_n: int 
         negative_terms,
         combined_path,
         legend_path,
-        "Episode reward components",
+        "Episode reward components - Crameri vanimo split, subpixel bands flattened",
+        subpixel_threshold_px,
     )
     return [csv_path, combined_path, legend_path]
 
@@ -202,9 +330,20 @@ def main() -> None:
         default=None,
         help="Plot only the N largest positive terms and N largest penalty terms by mean absolute contribution.",
     )
+    parser.add_argument(
+        "--subpixel-threshold-px",
+        type=float,
+        default=SUBPIXEL_BAND_THRESHOLD_PX,
+        help="Give terms whose average rendered band thickness is at or below this pixel threshold the center color.",
+    )
     args = parser.parse_args()
 
-    for output in plot_reward_components(args.run_dir, min_abs_mean=args.min_abs_mean, top_n=args.top_n):
+    for output in plot_reward_components(
+        args.run_dir,
+        min_abs_mean=args.min_abs_mean,
+        top_n=args.top_n,
+        subpixel_threshold_px=args.subpixel_threshold_px,
+    ):
         print(f"[INFO] Wrote: {output}", flush=True)
 
 

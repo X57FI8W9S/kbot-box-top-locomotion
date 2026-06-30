@@ -71,6 +71,24 @@ parser.add_argument(
     help="Reset the rollout only if root height falls to or below this value. Set below -100 to disable.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real time if possible.")
+parser.add_argument(
+    "--zero_actions",
+    action="store_true",
+    default=False,
+    help="Record with zero normalized actions instead of the loaded policy.",
+)
+parser.add_argument(
+    "--prime_default_targets",
+    action="store_true",
+    default=False,
+    help="Set joint position targets to the default reset pose before recording.",
+)
+parser.add_argument(
+    "--exact_reset",
+    action="store_true",
+    default=False,
+    help="Disable reset pose, velocity, and joint-position noise before recording.",
+)
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -91,6 +109,7 @@ from rsl_rl.runners import DistillationRunner, OnPolicyRunner  # noqa: E402
 import isaaclab_tasks  # noqa: F401,E402
 import kbot_loco  # noqa: F401,E402
 from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg, multi_agent_to_single_agent  # noqa: E402
+from isaaclab.managers import SceneEntityCfg  # noqa: E402
 from isaaclab.sensors import ContactSensor  # noqa: E402
 from isaaclab.utils.assets import retrieve_file_path  # noqa: E402
 from isaaclab.utils.math import quat_apply, quat_apply_inverse  # noqa: E402
@@ -100,6 +119,23 @@ from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
 from rsl_rl_compat import rsl_rl_train_cfg  # noqa: E402
 
 installed_version = version.parse(metadata.version("rsl-rl-lib"))
+_SCENE_ENTITY_RESOLVE = SceneEntityCfg.resolve
+
+
+def _resolve_scene_entity_from_current_names(self: SceneEntityCfg, scene: object) -> None:
+    """Resolve named entities against the active USD, ignoring stale cached ids."""
+    if self.joint_names is not None:
+        self.joint_ids = slice(None)
+    if self.fixed_tendon_names is not None:
+        self.fixed_tendon_ids = slice(None)
+    if self.body_names is not None:
+        self.body_ids = slice(None)
+    if self.object_collection_names is not None:
+        self.object_collection_ids = slice(None)
+    _SCENE_ENTITY_RESOLVE(self, scene)
+
+
+SceneEntityCfg.resolve = _resolve_scene_entity_from_current_names
 
 
 def _draw_fixed_value(
@@ -150,6 +186,40 @@ def _nanmean_window(values: deque[float]) -> float:
     array = np.asarray(tuple(values), dtype=np.float32)
     finite = array[np.isfinite(array)]
     return float(np.mean(finite)) if finite.size else 0.0
+
+
+def _clear_resolved_scene_entity_ids(value: object, visited: set[int] | None = None) -> None:
+    """Drop cached entity ids so USD overrides resolve names against the loaded asset."""
+    if visited is None:
+        visited = set()
+    object_id = id(value)
+    if object_id in visited:
+        return
+    visited.add(object_id)
+
+    if isinstance(value, SceneEntityCfg):
+        if value.joint_names is not None:
+            value.joint_ids = slice(None)
+        if value.fixed_tendon_names is not None:
+            value.fixed_tendon_ids = slice(None)
+        if value.body_names is not None:
+            value.body_ids = slice(None)
+        if value.object_collection_names is not None:
+            value.object_collection_ids = slice(None)
+        return
+
+    if isinstance(value, dict):
+        for item in value.values():
+            _clear_resolved_scene_entity_ids(item, visited)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _clear_resolved_scene_entity_ids(item, visited)
+        return
+
+    if hasattr(value, "__dict__"):
+        for item in vars(value).values():
+            _clear_resolved_scene_entity_ids(item, visited)
 
 
 def _short_joint_name(name: str) -> str:
@@ -262,6 +332,8 @@ def _draw_hud(
     approved_step_fraction: float,
     left_swing_clearance_m: float,
     right_swing_clearance_m: float,
+    left_swing_speed_mps: float,
+    right_swing_speed_mps: float,
 ) -> np.ndarray:
     frame = np.ascontiguousarray(frame)
     height, width = frame.shape[:2]
@@ -276,26 +348,35 @@ def _draw_hud(
     x = panel_x0 + 18
     top_y = 50
     cv2.putText(frame, "speed", (x, top_y), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (210, 230, 255), 1)
-    cv2.putText(frame, f"{speed:5.2f} m/s", (x + 72, top_y), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2)
-    col0 = x
-    col1 = x + 114
-    col2 = x + 238
-    col3 = x + 354
-    col4 = x + 469
-    col5 = x + 574
-    _put_fixed(frame, f"hgt {_format_float(root_height, 5, 2)}", (col2, top_y), width=10, scale=0.36)
-    _put_fixed(frame, f"x {_format_float(x_distance, 6, 2)}", (col3, top_y), width=9, scale=0.36)
-    _put_fixed(frame, f"y {_format_float(y_distance, 6, 2)}", (col4, top_y), width=9, scale=0.36)
-    _put_fixed(frame, f"apv {_format_float(100.0 * approved_step_fraction, 5, 1)}%", (col5, top_y), width=10, scale=0.34)
-    _put_fixed(frame, f"cmd {_format_float(command_speed, 5, 2)}", (col0, 74), width=10, scale=0.40)
-    _put_fixed(frame, f"yaw {_format_float(yaw_rate, 6, 2)}", (col1, 74), width=11, scale=0.40)
-    _put_fixed(frame, window_label, (col5, 74), width=10, scale=0.36, color=(190, 210, 235))
-    _put_fixed(frame, f"torR {_format_float(torso_rms, 6, 3)}", (col0, 96), width=13, scale=0.36)
-    _put_fixed(frame, f"torA {_format_float(torso_mean, 6, 3)}", (col1, 96), width=13, scale=0.36)
-    _put_fixed(frame, f"hipR {_format_float(hip_rms, 6, 3)}", (col2, 96), width=13, scale=0.36)
-    _put_fixed(frame, f"fsep {_format_float(fsep_m, 5, 2)}", (col3, 96), width=11, scale=0.36)
-    _put_fixed(frame, f"ksep {_format_float(ksep_m, 5, 2)}", (col4, 96), width=11, scale=0.36)
-    _put_fixed(frame, f"J/m {_format_float(joules_per_meter, 6, 1)}", (col5, 96), width=11, scale=0.34)
+    cv2.putText(frame, f"{speed:.2f} m/s", (x + 82, top_y), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2)
+    _put_fixed(frame, window_label, (x + 286, top_y), width=10, scale=0.34, color=(190, 210, 235))
+
+    metric_cols = (
+        (x, x + 42),
+        (x + 108, x + 148),
+        (x + 218, x + 258),
+        (x + 328, x + 368),
+        (x + 438, x + 478),
+        (x + 548, x + 588),
+    )
+
+    def _hud_metric(label: str, value: str, col: int, y_pos: int, *, label_width: int = 4) -> None:
+        label_x, value_x = metric_cols[col]
+        _put_fixed(frame, label, (label_x, y_pos), width=label_width, scale=0.34, color=(190, 210, 235))
+        _put_fixed(frame, value, (value_x, y_pos), width=8, scale=0.34)
+
+    _hud_metric("cmd", _format_float(command_speed, 5, 2), 0, 70)
+    _hud_metric("yaw", _format_float(yaw_rate, 6, 2), 1, 70)
+    _hud_metric("hgt", _format_float(root_height, 5, 2), 2, 70)
+    _hud_metric("x", _format_float(x_distance, 6, 2), 3, 70, label_width=2)
+    _hud_metric("y", _format_float(y_distance, 6, 2), 4, 70, label_width=2)
+    _hud_metric("apv", f"{_format_float(100.0 * approved_step_fraction, 5, 1)}%", 5, 70)
+    _hud_metric("torR", _format_float(torso_rms, 6, 3), 0, 88)
+    _hud_metric("torA", _format_float(torso_mean, 6, 3), 1, 88)
+    _hud_metric("hipR", _format_float(hip_rms, 6, 3), 2, 88)
+    _hud_metric("fsep", _format_float(fsep_m, 5, 2), 3, 88)
+    _hud_metric("ksep", _format_float(ksep_m, 5, 2), 4, 88)
+    _hud_metric("J/m", _format_float(joules_per_meter, 6, 1), 5, 88)
 
     # Fixed 1280x720 HUD slots. Keep numbers fixed-width so signs and new digits do not
     # move neighboring indicators; columns are placed by decimal-cell starts, not text length.
@@ -328,16 +409,20 @@ def _draw_hud(
     for label, key_l, key_r, row_y in (
         ("gnd", "left_stance", "right_stance", 58),
         ("sgl", "left_single", "right_single", 74),
-        ("dbl", "double", "airborne", 90),
     ):
         cv2.putText(frame, label, (support_x, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
         _put_fixed(frame, f"{100.0 * support_stats[key_l]:3.0f}", (support_l_x - 10, row_y), width=3, scale=0.32)
         _put_fixed(frame, f"{100.0 * support_stats[key_r]:3.0f}", (support_r_x - 10, row_y), width=3, scale=0.32)
-    cv2.putText(frame, "air", (support_r_x - 42, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+    cv2.putText(frame, "swv", (support_x, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+    _put_fixed(frame, _format_float(left_swing_speed_mps, 4, 2), (support_l_x - 15, 90), width=4, scale=0.32)
+    _put_fixed(frame, _format_float(right_swing_speed_mps, 4, 2), (support_r_x - 15, 90), width=4, scale=0.32)
     cv2.putText(frame, "clr", (support_x, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
     _put_fixed(frame, f"{1000.0 * left_swing_clearance_m:3.0f}", (support_l_x - 10, 106), width=3, scale=0.32)
     _put_fixed(frame, f"{1000.0 * right_swing_clearance_m:3.0f}", (support_r_x - 10, 106), width=3, scale=0.32)
-    cv2.putText(frame, "mm", (support_r_x - 42, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+    cv2.putText(frame, "dbl", (gait_label_x, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+    _put_fixed(frame, f"{100.0 * support_stats['double']:3.0f}", (gait_label_x + 34, 106), width=3, scale=0.32)
+    cv2.putText(frame, "air", (gait_label_x + 74, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1)
+    _put_fixed(frame, f"{100.0 * support_stats['airborne']:3.0f}", (gait_label_x + 108, 106), width=3, scale=0.32)
     row_y = 42
     row_step = 15
     for left_i, right_i in _paired_joint_rows(joint_names):
@@ -379,6 +464,22 @@ def _contact_body_ids(contact_sensor: ContactSensor, names: tuple[str, ...]) -> 
     if body_names is not None:
         return [list(body_names).index(name) for name in names]
     return list(range(len(names)))
+
+
+BOXTOP3_SOLE_CENTER_OFFSETS = (
+    (0.03, -0.036528655, -0.0194786795),
+    (0.03, -0.036528755, -0.0234786545),
+)
+TOP4_SOLE_CENTER_OFFSETS = (
+    (0.030000005, 0.036528746, -0.023478652),
+    (0.030000015, -0.036528759, -0.023478660),
+)
+
+
+def _sole_center_offsets_for_task(task_name: str | None) -> tuple[tuple[float, float, float], ...]:
+    if task_name is not None and "top4" in task_name.lower():
+        return TOP4_SOLE_CENTER_OFFSETS
+    return BOXTOP3_SOLE_CENTER_OFFSETS
 
 
 def _camera_cycle_window_steps(
@@ -561,6 +662,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.scene.num_envs = args_cli.num_envs
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    _clear_resolved_scene_entity_ids(env_cfg)
+    if args_cli.exact_reset:
+        env_cfg.events.reset_base.params["pose_range"] = {}
+        env_cfg.events.reset_base.params["velocity_range"] = {}
+        env_cfg.events.reset_robot_joints.params["position_range"] = (1.0, 1.0)
     env_cfg.viewer.eye = (0.0, -1.0, 1.2)
     env_cfg.viewer.lookat = (0.0, 0.0, 0.7)
     step_dt = float(env_cfg.sim.dt * env_cfg.decimation)
@@ -600,6 +706,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     obs = env.get_observations()
     robot = env.unwrapped.scene["robot"]
+    if args_cli.prime_default_targets:
+        robot.set_joint_position_target(robot.data.default_joint_pos.clone())
+        robot.write_data_to_sim()
     contact_sensor: ContactSensor = env.unwrapped.scene.sensors["contact_forces"]
     contact_body_ids = _contact_body_ids(contact_sensor, ("foot1", "foot3"))
     command_manager = getattr(env.unwrapped, "command_manager", None)
@@ -618,6 +727,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     ksep_window: deque[float] = deque()
     left_swing_clearance_window: deque[float] = deque()
     right_swing_clearance_window: deque[float] = deque()
+    left_swing_speed_window: deque[float] = deque()
+    right_swing_speed_window: deque[float] = deque()
     left_contact_window: deque[bool] = deque()
     right_contact_window: deque[bool] = deque()
     positive_work_window: deque[float] = deque()
@@ -633,7 +744,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     foot_body_ids = [body_names.index("foot1"), body_names.index("foot3")]
     knee_proxy_body_ids = [body_names.index("leg2_shell"), body_names.index("leg2_shell_2")]
     sole_center_offsets = torch.tensor(
-        [(0.03, -0.036528655, -0.0194786795), (0.03, -0.036528755, -0.0234786545)],
+        _sole_center_offsets_for_task(args_cli.task),
         dtype=robot.data.body_pos_w.dtype,
         device=robot.data.body_pos_w.device,
     )
@@ -653,6 +764,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "ksep_m": [],
         "left_swing_clearance_m": [],
         "right_swing_clearance_m": [],
+        "left_swing_speed_mps": [],
+        "right_swing_speed_mps": [],
         "x_distance_m": [],
         "y_distance_m": [],
         "positive_joint_work_j": [],
@@ -663,7 +776,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         if frame_index > 0 and float(robot.data.root_pos_w[0, 2].item()) <= args_cli.fall_reset_height:
             obs, _ = env.reset()
-            if installed_version >= version.parse("4.0.0"):
+            if not args_cli.zero_actions and installed_version >= version.parse("4.0.0"):
                 policy.reset(torch.ones(env.num_envs, dtype=torch.bool, device=env.unwrapped.device))
             fall_reset_count += 1
             previous_contact.zero_()
@@ -678,6 +791,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             ksep_window.clear()
             left_swing_clearance_window.clear()
             right_swing_clearance_window.clear()
+            left_swing_speed_window.clear()
+            right_swing_speed_window.clear()
             left_contact_window.clear()
             right_contact_window.clear()
             positive_work_window.clear()
@@ -756,6 +871,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             hip_roll_yaw_window.append(np.zeros(1, dtype=np.float32))
         foot_pos_w = robot.data.body_pos_w[0, foot_body_ids]
         foot_quat_w = robot.data.body_quat_w[0, foot_body_ids]
+        foot_vx_w = torch.clamp(robot.data.body_lin_vel_w[0, foot_body_ids, 0], min=0.0).detach().cpu().numpy()
         sole_pos_w = foot_pos_w + quat_apply(foot_quat_w, sole_center_offsets)
         sole_clearance = torch.clamp(sole_pos_w[:, 2], min=0.0).detach().cpu().numpy()
         root_pos_w = robot.data.root_pos_w[0:1]
@@ -769,6 +885,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         ksep_window.append(knee_sep_y)
         left_swing_clearance_window.append(float(sole_clearance[0]) if not bool(foot_contact[0].item()) else float("nan"))
         right_swing_clearance_window.append(float(sole_clearance[1]) if not bool(foot_contact[1].item()) else float("nan"))
+        left_swing_speed_window.append(float(foot_vx_w[0]) if not bool(foot_contact[0].item()) else float("nan"))
+        right_swing_speed_window.append(float(foot_vx_w[1]) if not bool(foot_contact[1].item()) else float("nan"))
         for values in (
             speed_window,
             command_window,
@@ -781,6 +899,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             ksep_window,
             left_swing_clearance_window,
             right_swing_clearance_window,
+            left_swing_speed_window,
+            right_swing_speed_window,
             left_contact_window,
             right_contact_window,
             positive_work_window,
@@ -812,6 +932,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         rollout_metrics["right_swing_clearance_m"].append(
             float(sole_clearance[1]) if not bool(foot_contact[1].item()) else float("nan")
         )
+        rollout_metrics["left_swing_speed_mps"].append(
+            float(foot_vx_w[0]) if not bool(foot_contact[0].item()) else float("nan")
+        )
+        rollout_metrics["right_swing_speed_mps"].append(
+            float(foot_vx_w[1]) if not bool(foot_contact[1].item()) else float("nan")
+        )
         rollout_metrics["x_distance_m"].append(x_distance)
         rollout_metrics["y_distance_m"].append(y_distance)
         rollout_metrics["positive_joint_work_j"].append(positive_work_step)
@@ -825,6 +951,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         hud_ksep_m = float(np.mean(ksep_window))
         hud_left_swing_clearance_m = _nanmean_window(left_swing_clearance_window)
         hud_right_swing_clearance_m = _nanmean_window(right_swing_clearance_window)
+        hud_left_swing_speed_mps = _nanmean_window(left_swing_speed_window)
+        hud_right_swing_speed_mps = _nanmean_window(right_swing_speed_window)
         hud_step_stats = _recent_step_stats(touchdown_events, args_cli.camera_cycle_window, dt)
         hud_approved_step_fraction = hud_step_stats["approved_fraction"]
         root_x_array = np.asarray(tuple(root_x_window), dtype=np.float32)
@@ -906,11 +1034,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 hud_approved_step_fraction,
                 hud_left_swing_clearance_m,
                 hud_right_swing_clearance_m,
+                hud_left_swing_speed_mps,
+                hud_right_swing_speed_mps,
             )
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
         with torch.inference_mode():
-            actions = policy(obs)
+            if args_cli.zero_actions:
+                actions = torch.zeros((env.num_envs, env.unwrapped.action_manager.total_action_dim), device=env.unwrapped.device)
+            else:
+                actions = policy(obs)
             obs, _, dones, _ = env.step(actions)
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
@@ -940,6 +1073,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "final_hud_sep_m": hud_fsep_m,
             "final_hud_left_swing_clearance_m": hud_left_swing_clearance_m,
             "final_hud_right_swing_clearance_m": hud_right_swing_clearance_m,
+            "final_hud_left_swing_speed_mps": hud_left_swing_speed_mps,
+            "final_hud_right_swing_speed_mps": hud_right_swing_speed_mps,
             "final_x_distance_m": x_distance,
             "final_y_distance_m": y_distance,
             "final_hud_positive_joint_work_j": hud_positive_work_j,
@@ -950,7 +1085,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "final_hud_step_stats": hud_step_stats,
             "fall_reset_height": args_cli.fall_reset_height,
             "fall_reset_count": fall_reset_count,
-            "policy_reset_mode": "fall_reset_only",
+            "policy_reset_mode": "zero_actions" if args_cli.zero_actions else "fall_reset_only",
+            "prime_default_targets": bool(args_cli.prime_default_targets),
+            "exact_reset": bool(args_cli.exact_reset),
             "joint_names": joint_names,
             "hip_roll_yaw_joint_names": [joint_names[index] for index in hip_roll_yaw_ids],
             "metrics": {
