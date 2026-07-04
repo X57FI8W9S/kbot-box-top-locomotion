@@ -309,7 +309,7 @@ def plot_reward_components(
         negative_terms,
         combined_path,
         legend_path,
-        "Episode reward components - Crameri vanimo split, subpixel bands flattened",
+        "Episode reward components",
         subpixel_threshold_px,
     )
     return [csv_path, combined_path, legend_path]

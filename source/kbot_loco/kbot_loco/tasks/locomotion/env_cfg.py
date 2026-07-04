@@ -878,7 +878,7 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
             },
             "dense_foot_swing_speed": {
                 "foot_local_offsets": sole_center_offsets,
-                "max_step_credit": 2.0,
+                "max_step_credit": 1.5,
                 "max_height": 0.020,
                 "max_tilt": 0.45,
                 "min_height": 0.005,
@@ -899,7 +899,7 @@ class KBotForwardFlatV3HandTuned648EnvCfg(KBotForwardFlatV25PoseGaitQuality648Co
             },
             "dense_swing_foot_target_location_exp": {
                 "first_target_fraction": first_step_fraction,
-                "linear_progress_scale": 1.0,
+                "linear_progress_scale": 0.2,
                 "max_tilt": 0.45,
                 "minimum_height": 0.76,
                 "period_s": target_cycle_period_s,
@@ -1297,19 +1297,19 @@ class KBotForwardFlatV4Top4StarterEnvCfg(KBotForwardFlatV31ScratchEnvCfg):
             (
                 "gait_step_timing",
                 {
-                    "alternating_step_duration_ema_l1": -10.0,
+                    "alternating_step_duration_ema_l1": -10,
                     "alternating_step_symmetry_l2": -0.2,
                     "contact_duty_symmetry_l2": -2.0,
                     "dense_foot_swing_speed": 10.0,
-                    "dense_swing_foot_target_location_exp": 50.0,
+                    "dense_swing_foot_target_location_exp": 125.0,
                     "dense_swing_step_length": 0.0,
                     "feet_air_time": 1.0,
                     "foot_retreat": -1.0,
                     "foot_sagittal_separation_l1": -4.0,
-                    "gait_cycle_plant_water_level": 1,
-                    "gait_cycle_support": 10.0,
+                    "gait_cycle_plant_water_level": 2.5,
+                    "gait_cycle_support": 20,
                     "swing_foot_overtake_l1": -100.0,
-                    "swing_sole_clearance": 200.0,
+                    "swing_sole_clearance": 75.0,
                 },
             ),
             (

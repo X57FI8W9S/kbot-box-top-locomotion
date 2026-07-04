@@ -7,9 +7,17 @@ from datetime import datetime
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import update_reward_weight_csv as reward_weight_history
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -18,10 +26,15 @@ DEFAULT_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 MILESTONES = (300, 500, 800, 1200, 2500, 5000, 10000)
 REWARD_WEIGHTS_WIDE_CSV = REPO_ROOT / "policies" / "all_reward_weights_wide_from_v1_to_now_20260626.csv"
 REWARD_WEIGHTS_RUNS_CSV = REPO_ROOT / "policies" / "all_reward_weight_runs_from_v1_to_now_20260626.csv"
+REWARD_WEIGHTS_TABLE_PNG = REPO_ROOT / "policies" / "reward_weights_by_training_run.png"
 
 
 TASK_ALIASES = {
     "v4": "Isaac-KBot-Forward-Flat-V4-Top4Starter-v0",
+}
+TASK_VERSIONS = {
+    "v4": "v4",
+    "Isaac-KBot-Forward-Flat-V4-Top4Starter-v0": "v4",
 }
 
 
@@ -123,16 +136,43 @@ def _slug(text: str) -> str:
     return re.sub(r"_+", "_", slug)[:80] or "run"
 
 
-def _default_run_name(task_alias: str, seed: SeedSpec, from_iter: int, to_iter: int, save_interval: int) -> str:
+def _task_version(task_alias: str, task: str) -> str:
+    if task_alias in TASK_VERSIONS:
+        return TASK_VERSIONS[task_alias]
+    if task in TASK_VERSIONS:
+        return TASK_VERSIONS[task]
+    inferred = reward_weight_history._infer_version(task_alias)
+    if inferred != "unknown":
+        return inferred
+    return reward_weight_history._infer_version(task)
+
+
+def _predict_run_code(task_alias: str, task: str, seed: SeedSpec, from_iter: int, to_iter: int) -> str:
+    return reward_weight_history.predict_next_display_lineage(
+        load_run=seed.load_run,
+        load_checkpoint=seed.checkpoint,
+        from_iter=from_iter,
+        to_iter=to_iter,
+        version=_task_version(task_alias, task),
+    )
+
+
+def _temporary_run_name(
+    task_alias: str,
+    planned_code: str,
+    from_iter: int,
+    to_iter: int,
+    save_interval: int,
+) -> str:
     date = datetime.now().strftime("%Y%m%d")
     return (
-        f"{_slug(task_alias)}_auto_from_{_slug(seed.slug)}_"
+        f"{_slug(task_alias)}_ktr_pending_{_slug(planned_code)}_"
         f"m{from_iter}_to_{to_iter}_save{save_interval}_{date}"
     )
 
 
 def _run(command: list[str], *, dry_run: bool) -> None:
-    print("+ " + " ".join(command), flush=True)
+    print("+ " + shlex.join(command), flush=True)
     if dry_run:
         return
     subprocess.run(command, cwd=REPO_ROOT, check=True)
@@ -207,6 +247,7 @@ def _print_done_summary(
     if weight_csv:
         print(f"[DONE] reward_weights_csv: {REWARD_WEIGHTS_WIDE_CSV}", flush=True)
         print(f"[DONE] reward_weights_runs_csv: {REWARD_WEIGHTS_RUNS_CSV}", flush=True)
+        print(f"[DONE] reward_weights_table_png: {REWARD_WEIGHTS_TABLE_PNG}", flush=True)
 
     message = f"model_{to_iter}.pt complete"
     if video_path is not None:
@@ -217,7 +258,7 @@ def _print_done_summary(
 def _confirm_or_cancel(commands: list[list[str]], *, yes: bool, dry_run: bool) -> None:
     print("[INFO] Planned commands:", flush=True)
     for command in commands:
-        print("+ " + " ".join(command), flush=True)
+        print("+ " + shlex.join(command), flush=True)
     if dry_run or yes:
         return
     try:
@@ -280,6 +321,80 @@ def _build_graph_command(python: Path, run_dir: Path) -> list[str]:
 
 def _build_weight_csv_command(python: Path) -> list[str]:
     return [str(python), "scripts/experiments/update_reward_weight_csv.py"]
+
+
+def _build_weight_table_command(python: Path) -> list[str]:
+    return [
+        str(python),
+        "scripts/diagnostics/render_reward_weight_table.py",
+        "--csv",
+        str(REWARD_WEIGHTS_WIDE_CSV),
+        "--output",
+        str(REWARD_WEIGHTS_TABLE_PNG),
+        "--palette",
+        "cork",
+        "--scale",
+        "2",
+    ]
+
+
+def _write_ktr_metadata(
+    *,
+    run_dir: Path,
+    task_alias: str,
+    task: str,
+    run_name: str,
+    seed: SeedSpec,
+    from_iter: int,
+    to_iter: int,
+    save_interval: int,
+) -> None:
+    metadata_path = run_dir / "params" / reward_weight_history.KTR_METADATA_NAME
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "task_alias": task_alias,
+        "task": task,
+        "version": _task_version(task_alias, task),
+        "run_name": run_name,
+        "load_run": seed.load_run,
+        "load_checkpoint": seed.checkpoint,
+        "from_iter": from_iter,
+        "to_iter": to_iter,
+        "save_interval": save_interval,
+    }
+    import yaml
+
+    metadata_path.write_text(yaml.safe_dump(metadata, sort_keys=False))
+
+
+def _replace_text(path: Path, replacements: dict[str, str]) -> None:
+    if not path.exists():
+        return
+    text = path.read_text()
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    path.write_text(text)
+
+
+def _rename_run_dir_to_code(run_dir: Path, run_code: str, old_run_name: str) -> Path:
+    timestamp = _run_timestamp(run_dir)
+    if timestamp is None:
+        raise RuntimeError(f"Could not infer timestamp from run directory: {run_dir}")
+    final_run_dir = run_dir.parent / f"{timestamp}_{run_code}"
+    if final_run_dir == run_dir:
+        return run_dir
+    if final_run_dir.exists():
+        raise FileExistsError(f"Compact-code run directory already exists: {final_run_dir}")
+
+    old_run_dir_text = str(run_dir)
+    run_dir.rename(final_run_dir)
+    replacements = {
+        old_run_dir_text: str(final_run_dir),
+        f"run_name: {old_run_name}": f"run_name: {run_code}",
+    }
+    _replace_text(final_run_dir / "params" / "agent.yaml", replacements)
+    _replace_text(final_run_dir / "params" / "env.yaml", replacements)
+    return final_run_dir
 
 
 def _build_video_command(
@@ -369,17 +484,25 @@ def main() -> None:
         raise ValueError("--save-interval must be positive")
 
     task = TASK_ALIASES.get(args.task, args.task)
-    run_name = args.run_name or _default_run_name(args.task, seed, from_iter, to_iter, args.save_interval)
+    planned_run_code = args.run_name or _predict_run_code(args.task, task, seed, from_iter, to_iter)
+    auto_compact_run_name = args.run_name is None and not args.skip_train
+    run_name = (
+        _temporary_run_name(args.task, planned_run_code, from_iter, to_iter, args.save_interval)
+        if auto_compact_run_name
+        else planned_run_code
+    )
 
     print(f"[INFO] seed: {seed.load_run}/{seed.checkpoint}", flush=True)
     print(f"[INFO] task: {task}", flush=True)
     print(f"[INFO] range: {from_iter} -> {to_iter}", flush=True)
     print(f"[INFO] run_name: {run_name}", flush=True)
+    if auto_compact_run_name:
+        print(f"[INFO] final_run_name after training: {planned_run_code}", flush=True)
 
     if args.dry_run:
-        run_dir = LOG_ROOT / f"<timestamp>_{run_name}"
+        run_dir = LOG_ROOT / f"<timestamp>_{planned_run_code}"
     else:
-        run_dir = _find_run_dir(run_name) if args.skip_train else LOG_ROOT / f"<timestamp>_{run_name}"
+        run_dir = _find_run_dir(run_name) if args.skip_train else LOG_ROOT / f"<timestamp>_{planned_run_code}"
 
     commands: list[list[str]] = []
     if not args.skip_train:
@@ -405,10 +528,12 @@ def main() -> None:
         checkpoint = run_dir / f"model_{to_iter}.pt"
         if args.skip_train and not args.dry_run and not checkpoint.exists():
             raise FileNotFoundError(f"Expected video checkpoint not found: {checkpoint}")
-        video_command = _build_video_command(args.python, task, run_dir, to_iter, args.video_length, run_name, args.headless)
+        artifact_run_name = planned_run_code if auto_compact_run_name else run_name
+        video_command = _build_video_command(args.python, task, run_dir, to_iter, args.video_length, artifact_run_name, args.headless)
         commands.append(video_command)
     if args.weight_csv:
         commands.append(_build_weight_csv_command(args.python))
+        commands.append(_build_weight_table_command(args.python))
 
     print(f"[INFO] run_dir: {run_dir}", flush=True)
     _confirm_or_cancel(commands, yes=args.yes, dry_run=args.dry_run)
@@ -419,6 +544,21 @@ def main() -> None:
         _run(commands[0], dry_run=args.dry_run)
         if not args.dry_run:
             run_dir = _find_run_dir(run_name)
+            if auto_compact_run_name:
+                actual_run_code = reward_weight_history.display_lineage_for_run_dir(run_dir)
+                run_dir = _rename_run_dir_to_code(run_dir, actual_run_code, run_name)
+                run_name = actual_run_code
+                print(f"[INFO] renamed run_dir to compact code: {run_dir}", flush=True)
+            _write_ktr_metadata(
+                run_dir=run_dir,
+                task_alias=args.task,
+                task=task,
+                run_name=run_name,
+                seed=seed,
+                from_iter=from_iter,
+                to_iter=to_iter,
+                save_interval=args.save_interval,
+            )
             print(f"[INFO] resolved run_dir: {run_dir}", flush=True)
 
     post_train_commands: list[list[str]] = []
@@ -432,6 +572,7 @@ def main() -> None:
         post_train_commands.append(video_command)
     if args.weight_csv:
         post_train_commands.append(_build_weight_csv_command(args.python))
+        post_train_commands.append(_build_weight_table_command(args.python))
 
     for command in post_train_commands:
         _run(command, dry_run=args.dry_run)

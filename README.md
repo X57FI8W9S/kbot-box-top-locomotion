@@ -86,6 +86,16 @@ policies/box_top_v2/design/diagnostics_plan.md
 policies/box_top_v2/FINAL_REPORT_DRAFT.md
 ```
 
+## Generated Diagnostics
+
+`policies/reward_weights_by_training_run.png` is the compact visual table of
+reward weights by run. Repeated lineage segments use `.(pattern)N` shorthand,
+so `X21.1.1.1.1.1.1` displays as `X21.(1)6` and
+`X21.1.2.1.2.1.2.1.2` displays as `X21.(1.2)4`. Alias mappings for short
+display codes like `z` are stored in
+`policies/all_reward_weight_runs_from_v1_to_now_20260626.csv`; future table
+rendering may add an alias row at the bottom of the PNG.
+
 ## What To Avoid
 
 - Do not commit `isaac_lab/`, `.venv/`, `logs/`, `outputs/`, checkpoints, videos, or screenshots.

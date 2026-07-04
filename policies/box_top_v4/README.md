@@ -778,6 +778,119 @@ below 0.25 s. If this candidate is tested, use raw touchdown duration or lower
 that clamp for this penalty only. EMA/window lag also means this is slower than
 `contact_chatter_l1` at punishing a single bad touchdown.
 
+## Observation Candidate: Proprioceptive Sole Position
+
+Candidate only. Do not add this to the fixed-code sweep unless it is tested as a
+separate observation branch.
+
+Problem:
+
+```text
+The current V4 policy observes the phase clock and joint/base state, but it is
+not explicitly told where each sole center is relative to the robot body. The
+target-location and sole-clearance rewards compute that geometry internally, so
+the policy has to infer sole position from joint state and dynamics.
+```
+
+Preferred candidate if the goal is to stay close to a proprioceptive walker:
+
+```text
+Add six observations:
+  left sole center in root/body frame:  x_b, y_b, z_b
+  right sole center in root/body frame: x_b, y_b, z_b
+
+Current actor observation size: 44
+Candidate actor observation size: 50
+```
+
+This is still derived proprioception if the same values can be computed from
+joint encoders and the robot kinematic model. It is not an external foothold
+target and it does not hand the reward answer to the policy.
+
+Candidate `mdp.py` sketch:
+
+```python
+def sole_position_b(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+    foot_local_offsets: list[tuple[float, float, float]] | None = None,
+) -> torch.Tensor:
+    """Return left/right sole-center positions in root/body frame.
+
+    Output shape is (num_envs, 6):
+      left_x_b, left_y_b, left_z_b, right_x_b, right_y_b, right_z_b
+    """
+    asset = env.scene[asset_cfg.name]
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+
+    if foot_local_offsets is not None:
+        foot_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+        local_offsets = torch.tensor(foot_local_offsets, dtype=foot_pos_w.dtype, device=foot_pos_w.device)
+        foot_pos_w = foot_pos_w + quat_apply(
+            foot_quat_w.reshape(-1, 4),
+            local_offsets[None, :, :].expand(env.num_envs, -1, -1).reshape(-1, 3),
+        ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
+
+    root_pos_w = asset.data.root_pos_w[:, None, :]
+    root_quat_w = asset.data.root_quat_w[:, None, :].expand(-1, len(asset_cfg.body_ids), -1)
+    sole_pos_b = quat_apply_inverse(
+        root_quat_w.reshape(-1, 4),
+        (foot_pos_w - root_pos_w).reshape(-1, 3),
+    ).reshape(env.num_envs, len(asset_cfg.body_ids), 3)
+
+    return sole_pos_b.reshape(env.num_envs, -1)
+```
+
+Candidate V4 wiring sketch:
+
+```python
+self.observations.policy.sole_position_b = ObsTerm(
+    func=mdp.sole_position_b,
+    params={
+        "asset_cfg": SceneEntityCfg("robot", body_names=["foot1", "foot3"]),
+        "foot_local_offsets": sole_center_offsets,
+    },
+)
+```
+
+Optional normalization, only if the unnormalized values are hard for PPO with
+`actor_obs_normalization=False`:
+
+```python
+scale = torch.tensor([0.60, 0.30, 0.90], dtype=sole_pos_b.dtype, device=sole_pos_b.device)
+return (sole_pos_b / scale[None, None, :]).reshape(env.num_envs, -1)
+```
+
+Do not use absolute world foot position as the first test:
+
+```text
+world foot x/y leaks global translation and makes the policy learn an arbitrary
+environment coordinate. Root/body-frame sole position preserves translation
+invariance.
+```
+
+Task-reference alternative, not purely proprioceptive:
+
+```text
+Add target-relative signed error:
+  left_dx, left_dy, right_dx, right_dy
+
+This should be treated as a different branch. It tells the policy where the
+reward target is, so it is closer to a clocked/task-reference controller than a
+plain proprioceptive walker.
+```
+
+If the target-error branch is tested, prefer signed normalized errors over a
+radius:
+
+```text
+dx = (foot_x_w - target_x_w) / x_scale
+dy = (foot_y_w - target_y_w) / y_scale
+```
+
+Do not use only `r = sqrt(dx^2 + dy^2)` as the first test. Radius says how wrong
+the foot is, but not whether it is too short, too long, inside, or outside.
+
 ## 2026-06-19 Implicit Actuator Preview Run
 
 Training run:
