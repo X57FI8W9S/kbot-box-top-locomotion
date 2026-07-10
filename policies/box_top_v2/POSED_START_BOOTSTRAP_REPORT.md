@@ -59,7 +59,7 @@ V2.4 was:
 
 ```text
 task = Isaac-KBot-Forward-Flat-V2_4-Scratch-PoseBootstrap-v0
-run = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_G1
 checkpoint = model_1299.pt
 start = true iteration zero, no checkpoint resume
 ```
@@ -409,7 +409,7 @@ The first V2.5 attempt did improve the support geometry, but it still did not pr
 
 ```text
 task = Isaac-KBot-Forward-Flat-V2_5-Scratch-PoseWidthBootstrap-v0
-run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-20-24_v2_5_pose_first_steps_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-20-24_H2
 checkpoint = model_599.pt
 decision = REJECT
 ```
@@ -454,7 +454,7 @@ This is not a return to "train standing first." It is a direct posed-start first
 That stronger version was also tested:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-31-19_v2_5_pose_first_steps_stronger_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-31-19_H3
 checkpoint = model_349.pt
 decision = REJECT
 ```
@@ -491,7 +491,7 @@ raise foot-flat and heading/yaw penalties enough to reject edge-walk in-place st
 That world-forward version was tested next:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-38-01_v2_5_pose_world_forward_first_steps_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-38-01_H4
 checkpoint = model_349.pt
 decision = REJECT
 ```
@@ -526,7 +526,7 @@ upright_alive minimum_height = 0.76
 The fall-guarded version was then tested:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-48-51_v2_5_pose_world_forward_fall_guard_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-48-51_H6
 checkpoint = model_349.pt
 decision = REJECT
 ```
@@ -567,7 +567,7 @@ do not accept distance from collapse, edge walking, or double-support drift.
 The first positive-forward run was tested:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-55-48_v2_5_pose_forward_reward_fall_guard_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_23-55-48_H7
 checkpoint = model_349.pt
 decision = REVIEW_VIDEO
 ```
@@ -598,7 +598,7 @@ Interpretation:
 The next run reduced the raw forward bonus and made support width much more expensive:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-01-36_v2_5_pose_forward_width_guard_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-01-36_H8
 checkpoint = model_349.pt
 decision = REJECT
 ```
@@ -630,7 +630,7 @@ Interpretation:
 The successful V2.5 posed-start run added tighter direction control:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-07-27_v2_5_pose_forward_width_heading_guard_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-07-27_H9
 checkpoint = model_349.pt
 decision = APPROVE
 ```
@@ -680,8 +680,8 @@ The gait-quality stage continues inside the V2.5 lineage. It continued from the 
 
 ```text
 task = Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0
-source checkpoint = 2026-05-09_00-07-27_v2_5_pose_forward_width_heading_guard_from_zero_fsep_ksep/model_349.pt
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep
+source checkpoint = 2026-05-09_00-07-27_H9/model_349.pt
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_H9.1
 checkpoint = model_648.pt
 decision = APPROVE
 ```
@@ -733,10 +733,10 @@ Follow-up continuation from `model_648.pt`:
 
 ```text
 task = Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-00-12_v2_5_gait_quality_continue_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-00-12_H10
 checkpoint = model_947.pt
 decision = APPROVE
-video = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-00-12_v2_5_gait_quality_continue_from_648/videos/play/trailing-hud-model_947-v2_5-x-y-fsep-ksep.mp4
+video = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-00-12_H10/videos/play/trailing-hud-model_947-v2_5-x-y-fsep-ksep.mp4
 ```
 
 Key metrics:
@@ -763,7 +763,7 @@ Continuation from `model_947.pt`:
 
 ```text
 task = Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-21-36_v2_5_gait_quality_continue_from_947
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-21-36_H10.1
 checkpoint = model_1246.pt
 decision = APPROVE
 keeper = no
@@ -796,7 +796,7 @@ Walking-only gate update:
 
 ```text
 evaluator patch = max per-foot cycle cadence, root advance per step/cycle, tighter lateral drift
-diagnostic rerun = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-21-36_v2_5_gait_quality_continue_from_947/diagnostics/model_1246_headless_walk_gates
+diagnostic rerun = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-21-36_H10.1/diagnostics/model_1246_headless_walk_gates
 decision = REJECT
 ```
 
@@ -831,8 +831,8 @@ swing_foot_overtake_l1:
 Training test with the walking-only reward/gates:
 
 ```text
-source checkpoint = 2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep/model_648.pt
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_02-36-29_v2_5_walk_only_contact_quality_from_648
+source checkpoint = 2026-05-09_00-16-45_H9.1/model_648.pt
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_02-36-29_H9.1.1
 resume mode = policy_only_resume
 task = Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality-v0
 ```
@@ -870,7 +870,7 @@ Interpretation: the evaluator now catches the exploit, but the first reward patc
 Later S4.2 anti-shuffle attempt from the conservative `model_648.pt` seed:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-03-47_v2_5_s4_2_chatter_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-03-47_H9.1.14
 task = Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterSuppression-v0
 checkpoint = model_727.pt
 decision = REJECT
@@ -886,7 +886,7 @@ Interpretation: this was not a keeper. It barely moved cadence and weakened the 
 Recovered-gate follow-up:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-42-06_v2_5_s4_2_apv_gate_recover_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-42-06_H9.1.15
 checkpoint = model_697.pt
 decision = REJECT
 cycle_cadence_hz               7.79   (baseline model_648: 8.06)
@@ -901,7 +901,7 @@ Interpretation: recovering the 8 mm / 70 ms gate was necessary but not sufficien
 7.5 Hz ceiling follow-up:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-47-01_v2_5_s4_2_apv_gate_75hz_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-47-01_H9.1.16
 checkpoint = model_697.pt
 decision = REJECT
 cycle_cadence_hz               8.33   (baseline model_648: 8.06)
@@ -919,7 +919,7 @@ Next test: make S4.2 explicitly `apv`-dominant. Keep the 8 mm / 70 ms approved-s
 `apv`-dominant follow-up:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-51-22_v2_5_s4_2_apv_dominant_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-51-22_H9.1.17
 checkpoint = model_697.pt
 decision = REJECT
 cycle_cadence_hz               8.33   (baseline model_648: 8.06)
@@ -935,7 +935,7 @@ Interpretation: reducing positive speed reward pressure improved neither cadence
 Relaxed valid-step and doubled dense-progress follow-up:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-19_17-22-33_v2_5_s4_2_valid008_dense12_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-19_17-22-33_H9.1.18
 task = Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterSuppression-v0
 code change = valid_step_root_advance min_step_advance 0.020 -> 0.008; dense_single_support_step_progress default weight 6.0 -> 12.0
 parent = model_648.pt
@@ -998,15 +998,15 @@ V2.5 frozen model_648-compatible stack:
   Isaac-KBot-Forward-Flat-V2_5-S4_2-ChatterFrom648Compat-v0
 ```
 
-Use the `648Compat` task for any run that claims to reproduce or branch directly from `2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep/model_648.pt`. Use the non-compat S4 task only when the intention is to run the newer experimental reward stack.
+Use the `648Compat` task for any run that claims to reproduce or branch directly from `2026-05-09_00-16-45_H9.1/model_648.pt`. Use the non-compat S4 task only when the intention is to run the newer experimental reward stack.
 
 ## Immediate To-Do
 
 1. Keep `fsep` and `ksep` in `evaluate_checkpoint.py`.
 2. Keep hard/reporting gates for minimum support width.
-3. Do not continue from `2026-05-09_01-21-36_v2_5_gait_quality_continue_from_947/model_1246.pt`.
-4. Do not continue from `2026-05-09_02-36-29_v2_5_walk_only_contact_quality_from_648/model_947.pt`.
-5. Use `2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep/model_648.pt` as the conservative active seed only with `Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality648Compat-v0` or an explicitly named child task.
+3. Do not continue from `2026-05-09_01-21-36_H10.1/model_1246.pt`.
+4. Do not continue from `2026-05-09_02-36-29_H9.1.1/model_947.pt`.
+5. Use `2026-05-09_00-16-45_H9.1/model_648.pt` as the conservative active seed only with `Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality648Compat-v0` or an explicitly named child task.
 6. Keep the new evaluator gates for cadence, step root advance, cycle root advance, and lateral drift.
 7. Revise the next S4.2 run around the recovered approved-step gate: `step_advance_margin_reward` at 0.008 m / 0.07 s, with command speed above the moving-command threshold and `max_cycle_hz` initially near 7.5.
    Do not rely on `apv%` alone; it must be paired with a forward-distance or cycle-root-advance floor so the policy cannot pass the gate while stepping in place.
@@ -1025,7 +1025,7 @@ Useful result:
 
 ```text
 keeper evidence checkpoint = model_648.pt
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_H9.1
 ```
 
 `model_648.pt` demonstrated that the authored reset pose can be used as a

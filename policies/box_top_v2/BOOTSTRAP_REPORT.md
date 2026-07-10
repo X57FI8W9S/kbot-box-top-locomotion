@@ -22,7 +22,7 @@ The fastest reliable path found so far is not direct full-V2 PPO from iteration 
 
 The shortest reliable anti-fall bootstrap was:
 
-- `logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32/model_1298.pt`
+- `logs/rsl_rl/kbot_forward_flat/2026-05-04_07-41-32_X36.1/model_1298.pt`
 - Scratch training, about 1298 policy iterations.
 - 3 s episodes, timeout-only, `alive=+5`, base-height and low-body shaping, knee-extension shaping, low command range.
 - Result: upright recovery with positive reward, but not walking. Evaluator speed ratio was only about `0.049`, distance was about `0.308 m` over 30 s, and double support was about `0.987`.
@@ -30,13 +30,13 @@ The shortest reliable anti-fall bootstrap was:
 The earliest V2 walking-ish checkpoint after a scratch restart was the continuation from that anti-fall bootstrap:
 
 - Bootstrap: `model_1298.pt`
-- Gait continuation: `logs/rsl_rl/kbot_forward_flat/2026-05-04_16-40-24/model_1797.pt`
+- Gait continuation: `logs/rsl_rl/kbot_forward_flat/2026-05-04_16-40-24_X36.1.4/model_1797.pt`
 - Total from scratch lineage: about `1797` iterations.
 - Result: speed ratio about `1.134` and yaw passed, but lateral drift and gait-quality gates still failed.
 
 The best V2 checkpoint in this scratch-bootstrap lineage was later:
 
-- `logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03/model_2795.pt`
+- `logs/rsl_rl/kbot_forward_flat/2026-05-04_19-18-03_X36.1.4.1.1/model_2795.pt`
 - Total from scratch lineage: about `2795` iterations.
 - Result: speed, yaw, lateral, root-roll, and root-height gates passed. Hip-roll/contact/airborne behavior still failed, so it was not a final keeper.
 
@@ -220,7 +220,7 @@ The old handcrafted pose was not used in the main run. It was treated as a clue 
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_00-36-13_v2_2_bootstrap_from_zero_known_recipe
+logs/rsl_rl/kbot_forward_flat/2026-05-07_00-36-13_E1
 ```
 
 Command:
@@ -255,7 +255,7 @@ It inherits the successful bootstrap task and only adds moderate gait pressure: 
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_01-01-30_v2_2_gait_transition_from_1299
+logs/rsl_rl/kbot_forward_flat/2026-05-07_01-01-30_E1.1
 ```
 
 Command:
@@ -267,7 +267,7 @@ Command:
   --num_envs 1024 \
   --max_iterations 500 \
   --resume \
-  --load_run 2026-05-07_00-36-13_v2_2_bootstrap_from_zero_known_recipe \
+  --load_run 2026-05-07_00-36-13_E1 \
   --checkpoint model_1299.pt \
   --run_name v2_2_gait_transition_from_1299
 ```
@@ -281,7 +281,7 @@ Result:
 Headless diagnostic:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_01-01-30_v2_2_gait_transition_from_1299/diagnostics/model_1798_headless
+logs/rsl_rl/kbot_forward_flat/2026-05-07_01-01-30_E1.1/diagnostics/model_1798_headless
 ```
 
 Evaluator decision: `REJECT`.
@@ -317,7 +317,7 @@ It inherits the gentle gait transition and increases yaw, lateral velocity, worl
 First continuation:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_01-24-17_v2_2_yaw_lateral_transition_from_1798
+logs/rsl_rl/kbot_forward_flat/2026-05-07_01-24-17_E1.1.1
 ```
 
 Result:
@@ -344,7 +344,7 @@ Interpretation: this stage fixed the catastrophic yaw problem from `model_1798`,
 Second continuation:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_01-30-59_v2_2_yaw_lateral_transition_from_2297
+logs/rsl_rl/kbot_forward_flat/2026-05-07_01-30-59_E1.(1)3
 ```
 
 Result:
@@ -368,7 +368,7 @@ Headless diagnostic for `model_2796.pt`:
 Video:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_01-30-59_v2_2_yaw_lateral_transition_from_2297/videos/play/trailing-hud-model_2796-v2_2-yaw-lateral.mp4
+logs/rsl_rl/kbot_forward_flat/2026-05-07_01-30-59_E1.(1)3/videos/play/trailing-hud-model_2796-v2_2-yaw-lateral.mp4
 ```
 
 Interpretation:
@@ -390,7 +390,7 @@ This stage inherits the yaw/lateral transition and adds an explicit root lateral
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_02-05-02_v2_2_lateral_cleanup_from_2796
+logs/rsl_rl/kbot_forward_flat/2026-05-07_02-05-02_E1.(1)4
 ```
 
 Result:
@@ -417,7 +417,7 @@ Headless diagnostic for `model_3195.pt`:
 Video:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_02-05-02_v2_2_lateral_cleanup_from_2796/videos/play/trailing-hud-model_3195-v2_2-lateral-cleanup.mp4
+logs/rsl_rl/kbot_forward_flat/2026-05-07_02-05-02_E1.(1)4/videos/play/trailing-hud-model_3195-v2_2-lateral-cleanup.mp4
 ```
 
 Interpretation:
@@ -443,7 +443,7 @@ Isaac-KBot-Forward-Flat-V2-LateralCleanup-FineTune-v0
 The useful fine-tune run is:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_02-53-20_v2_2_lateral_cleanup_policy_only_finetune_from_3195
+logs/rsl_rl/kbot_forward_flat/2026-05-07_02-53-20_E1.(1)4.3
 ```
 
 Result:
@@ -467,7 +467,7 @@ Headless diagnostic for `model_3200.pt`:
 Video with fixed gait table columns and corrected raw `sep` display:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-07_02-53-20_v2_2_lateral_cleanup_policy_only_finetune_from_3195/videos/play/trailing-hud-model_3200-v2_2-finetune-hudfix-rawsep.mp4
+logs/rsl_rl/kbot_forward_flat/2026-05-07_02-53-20_E1.(1)4.3/videos/play/trailing-hud-model_3200-v2_2-finetune-hudfix-rawsep.mp4
 ```
 
 In this render, the old HUD `sep` value is now named `fsep`: `abs(left_sole_y - right_sole_y)` in root/body coordinates, averaged over the same five-cycle HUD window used by most of the overlay. The overlay also reports `ksep`, the same lateral separation formula applied to the left/right knee proxy bodies. The final JSON keeps `final_hud_sep_m` as a compatibility alias for `final_hud_fsep_m`.
@@ -622,7 +622,7 @@ The next scratch policy was started from this settled pose:
 Result:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_G1
 checkpoint = model_1299.pt
 start = true policy iteration zero, no checkpoint resume
 final iteration = 1299/1300
@@ -635,8 +635,8 @@ termination_penalty = 0.0
 The 30 s playback for the final checkpoint wrote:
 
 ```text
-video = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep/videos/play/trailing-hud-model_1299-v2_4-pose-bootstrap-fsep-ksep.mp4
-metrics = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_v2_4_pose_bootstrap_from_zero_settled_fsep_ksep/videos/play/trailing-hud-model_1299-v2_4-pose-bootstrap-fsep-ksep.json
+video = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_G1/videos/play/trailing-hud-model_1299-v2_4-pose-bootstrap-fsep-ksep.mp4
+metrics = logs/rsl_rl/kbot_forward_flat/2026-05-08_12-35-11_G1/videos/play/trailing-hud-model_1299-v2_4-pose-bootstrap-fsep-ksep.json
 frames = 1500
 fps = 50
 duration = 30.0 s

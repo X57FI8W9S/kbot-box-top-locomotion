@@ -194,7 +194,7 @@ Current approved posed-geometry seed:
 
 ```text
 Stage: S2_POSED_GEOMETRY_POLICY_SEED
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-07-27_v2_5_pose_forward_width_heading_guard_from_zero_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-07-27_H9
 checkpoint = model_349.pt
 decision = APPROVE
 ```
@@ -203,7 +203,7 @@ Current conservative active seed for first-step / anti-shuffle work:
 
 ```text
 Stage: S3_FIRST_SUPPORTED_STEPS / S4_ANTI_SHUFFLE_WALK boundary
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_H9.1
 checkpoint = model_648.pt
 decision = APPROVE
 status = conservative active seed, not final gait
@@ -212,12 +212,12 @@ status = conservative active seed, not final gait
 Known rejects that define S4:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-21-36_v2_5_gait_quality_continue_from_947
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_01-21-36_H10.1
 checkpoint = model_1246.pt
 decision = REJECT after tightened walk gates
 reason = high cadence, tiny root advance, lateral/yaw regression
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_02-36-29_v2_5_walk_only_contact_quality_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_02-36-29_H9.1.1
 checkpoint = model_947.pt
 decision = REJECT
 reason = high cadence, tiny root advance, poor speed tracking
@@ -226,7 +226,7 @@ reason = high cadence, tiny root advance, poor speed tracking
 Current S4 anti-shuffle evidence:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_08-43-54_v2_5_step_gate_007_from_806
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_08-43-54_H9.1.13.1.2
 checkpoint = model_885.pt
 decision = REVIEW_VIDEO
 summary = best current normal-speed posed-start baseline before the latest continuations
@@ -236,7 +236,7 @@ cycle_root_advance_mean_m = 0.0133
 cycle_cadence_hz = 6.74
 root_height_p05_m = 0.8502
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_14-30-16_v2_5_step_gate_007_normal_continue_from_885
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_14-30-16_H9.1.13.1.2.2
 checkpoint = model_964.pt
 decision = REVIEW_VIDEO
 summary = cadence improved, but step advance and speed regressed; usable as evidence, not a promotion
@@ -246,7 +246,7 @@ cycle_root_advance_mean_m = 0.0129
 cycle_cadence_hz = 5.89
 root_height_p05_m = 0.8479
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_14-36-39_v2_5_step_gate_007_normal_continue_from_964
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_14-36-39_H9.1.13.1.2.2.1
 checkpoint = model_1043.pt
 decision = REVIEW_VIDEO
 summary = cadence and step advance improved, but speed overshot and height margin degraded; not a clean continuation seed
@@ -256,7 +256,7 @@ cycle_root_advance_mean_m = 0.0018
 cycle_cadence_hz = 4.68
 root_height_p05_m = 0.8125
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_H9.1
 checkpoint = model_648.pt
 diagnostics = diagnostics/model_648_headless_s4_baseline
 summary = refreshed S4 parent baseline with approved-step and clearance metrics
@@ -273,7 +273,7 @@ ksep_mean_m = 0.3209
 swing_sole_clearance_mean_left_m = 0.0036
 swing_sole_clearance_mean_right_m = 0.0029
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-03-47_v2_5_s4_2_chatter_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-03-47_H9.1.14
 checkpoint = model_727.pt
 decision = REJECT
 summary = first S4.2 attempt reduced cadence only trivially and collapsed the working approved-step signal
@@ -284,7 +284,7 @@ cycle_root_advance_mean_m = 0.0116
 cycle_cadence_hz = 7.94
 root_height_p05_m = 0.8508
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-42-06_v2_5_s4_2_apv_gate_recover_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-42-06_H9.1.15
 checkpoint = model_697.pt
 decision = REJECT
 summary = recovered the 8 mm / 70 ms approved-step reward gate, but the 5 Hz cadence ceiling was still too abrupt
@@ -299,7 +299,7 @@ root_height_p05_m = 0.8517
 swing_sole_clearance_mean_left_m = 0.0039
 swing_sole_clearance_mean_right_m = 0.0028
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-47-01_v2_5_s4_2_apv_gate_75hz_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-47-01_H9.1.16
 checkpoint = model_697.pt
 decision = REJECT
 summary = 7.5 Hz ceiling preserved height/width/clearance but did not suppress shuffle; cadence and overspeed worsened
@@ -314,7 +314,7 @@ root_height_p05_m = 0.8533
 swing_sole_clearance_mean_left_m = 0.0038
 swing_sole_clearance_mean_right_m = 0.0029
 
-run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-51-22_v2_5_s4_2_apv_dominant_from_648
+run = logs/rsl_rl/kbot_forward_flat/2026-05-15_16-51-22_H9.1.17
 checkpoint = model_697.pt
 decision = REJECT
 summary = lower speed reward preserved geometry and slightly improved right clearance/drift, but still worsened cadence and overspeed
@@ -361,7 +361,7 @@ Stage 4 should be a real anti-shuffle curriculum, not a generic gait-quality con
 Default parent:
 
 ```text
-run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep
+run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_H9.1
 checkpoint = model_648.pt
 role = S3/S4 boundary seed
 ```

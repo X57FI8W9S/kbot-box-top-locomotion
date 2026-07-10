@@ -286,13 +286,13 @@ Preferred checkpoint profile:
 Best current torso checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53/model_11195.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53_z.2.1.(1.2.1)2/model_11195.pt
 ```
 
 Best balanced checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25/model_11096.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25_z.2.(1.1.2)2/model_11096.pt
 ```
 
 Measured 30 second results:

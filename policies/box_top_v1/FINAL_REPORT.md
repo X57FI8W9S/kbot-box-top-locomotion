@@ -384,7 +384,7 @@ This early period is less cleanly documented than the later branch sequence, so 
 Representative run:
 
 ```text
-2026-04-25_19-54-27, model_0.pt -> model_999.pt
+2026-04-25_19-54-27_X2, model_0.pt -> model_999.pt
 ```
 
 Initial command/task setup:
@@ -434,7 +434,7 @@ Early policies learned to survive long enough to time out, but forward tracking 
 Representative run:
 
 ```text
-2026-04-25_20-35-49, model_0.pt -> model_650.pt
+2026-04-25_20-35-49_X10, model_0.pt -> model_650.pt
 ```
 
 Reward changes relative to the initial representative run:
@@ -453,7 +453,7 @@ It was identified that policies could exploit crouched or mechanically poor post
 Representative run:
 
 ```text
-2026-04-25_21-14-30, model_0.pt -> model_1050.pt
+2026-04-25_21-14-30_X18, model_0.pt -> model_1050.pt
 ```
 
 Task and reward changes:
@@ -486,7 +486,7 @@ The command was slowed sharply and posture/survival terms were strengthened. Vel
 Representative run:
 
 ```text
-2026-04-25_21-30-30, model_0.pt -> model_1000.pt
+2026-04-25_21-30-30_X21, model_0.pt -> model_1000.pt
 ```
 
 Task and reward changes:
@@ -516,8 +516,8 @@ Episodes were shortened to make survival achievable. This helped produce timeout
 Representative runs:
 
 ```text
-2026-04-25_21-42-41, model_1050.pt -> model_1549.pt
-2026-04-26_01-38-53, model_1550.pt -> model_2348.pt
+2026-04-25_21-42-41_X21.1.1, model_1050.pt -> model_1549.pt
+2026-04-26_01-38-53_X21.(1)3, model_1550.pt -> model_2348.pt
 ```
 
 Task/reward changes:
@@ -554,8 +554,8 @@ The policy could survive 8 s episodes, but straightness/yaw was still poor. This
 Representative runs:
 
 ```text
-2026-04-26_02-15-34, model_2250.pt -> model_2649.pt
-2026-04-26_02-45-50, model_2650.pt -> model_3148.pt
+2026-04-26_02-15-34_X21.(1)3.2, model_2250.pt -> model_2649.pt
+2026-04-26_02-45-50_X21.(1)3.2.1, model_2650.pt -> model_3148.pt
 ```
 
 Task/reward changes:
@@ -597,8 +597,8 @@ Foot placement and heading terms materially improved yaw/straightness. This is w
 Representative runs:
 
 ```text
-2026-04-26_02-52-06, model_3150.pt -> model_3647.pt
-2026-04-26_03-27-17, model_3600.pt -> model_4199.pt
+2026-04-26_02-52-06_X21.(1)3.2.1.1, model_3150.pt -> model_3647.pt
+2026-04-26_03-27-17_X21.1.(1.1.2)2, model_3600.pt -> model_4199.pt
 ```
 
 Task/reward changes:
@@ -637,8 +637,8 @@ Foot crossing and foot-lane discipline were reinforced. Yaw error improved compa
 Representative runs:
 
 ```text
-2026-04-26_04-50-38, model_5450.pt -> model_6048.pt
-2026-04-26_17-54-49, model_6000.pt -> model_6599.pt
+2026-04-26_04-50-38_X21.1.(1.1.2)2.(1)4, model_5450.pt -> model_6048.pt
+2026-04-26_17-54-49_X21.1.(1.1.2)2.(1)5, model_6000.pt -> model_6599.pt
 ```
 
 Task/reward changes:
@@ -677,11 +677,11 @@ The policy was pushed toward faster walking. Step structure and stance-foot flat
 Representative runs:
 
 ```text
-2026-04-26_19-42-47, model_8400.pt -> model_8895.pt
-2026-04-26_20-29-08, model_8950.pt -> model_9449.pt
-2026-04-26_21-22-06, model_9250.pt -> model_9649.pt
-2026-04-27_01-50-43, model_9500.pt -> model_10099.pt
-2026-04-27_01-57-15, model_10050.pt -> model_10349.pt
+2026-04-26_19-42-47_X21.1.(1.1.2)2.(1)9, model_8400.pt -> model_8895.pt
+2026-04-26_20-29-08_z, model_8950.pt -> model_9449.pt
+2026-04-26_21-22-06_z.2, model_9250.pt -> model_9649.pt
+2026-04-27_01-50-43_z.2.1, model_9500.pt -> model_10099.pt
+2026-04-27_01-57-15_z.2.1.1, model_10050.pt -> model_10349.pt
 ```
 
 Task/reward changes:
@@ -709,7 +709,7 @@ foot_world_parallel_max_l2:        added at -3.0
 Observed scalar summary at the reference baseline:
 
 ```text
-2026-04-27_01-57-15/model_10300.pt:
+2026-04-27_01-57-15_z.2.1.1/model_10300.pt:
   speed mean:            0.77082 m/s
   command mean:          0.81824 m/s
   yaw-rate mean:        -0.01659 rad/s
@@ -727,7 +727,7 @@ The reward function at `model_10300.pt` had become a dense gait-shaping reward w
 Reference checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15/model_10300.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15_z.2.1.1/model_10300.pt
 ```
 
 Baseline metrics:
@@ -745,7 +745,7 @@ The robot could move, but it leaned and used persistent hip roll/yaw offsets. Th
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_03-46-31/model_10449.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_03-46-31_z.2.(1)3/model_10449.pt
 ```
 
 Why:
@@ -780,7 +780,7 @@ The overconstraint hypothesis was only partly useful. Deconstraining did not fix
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27/model_10599.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27_z.2.1.1.2/model_10599.pt
 ```
 
 Why:
@@ -813,7 +813,7 @@ Slower commands helped slightly, but the robot still leaned. This confirmed that
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47/model_10798.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47_z.2.1.1.2.1/model_10798.pt
 ```
 
 Why:
@@ -844,7 +844,7 @@ This was the first clear improvement. Directly penalizing lateral tilt and hip r
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45/model_10997.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45_z.(2.1.1)2/model_10997.pt
 ```
 
 Result:
@@ -864,7 +864,7 @@ Continuing the same branch kept improving. It crossed the first practical hip mi
 Key checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_11-12-07/model_11294.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_11-12-07_z.(2.1.1)3/model_11294.pt
 ```
 
 Why:
@@ -907,8 +907,8 @@ This was conceptually important: persistent lateral lean and persistent hip roll
 Runs:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_17-42-57/model_11393.pt
-logs/rsl_rl/kbot_forward_flat/2026-04-27_17-46-04/model_11492.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_17-42-57_z.(2.1.1)3.1/model_11393.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_17-46-04_z.(2.1.1)3.1.1/model_11492.pt
 ```
 
 Why:
@@ -953,7 +953,7 @@ This moved hip roll/yaw in the right direction without falls. Torso improved at 
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/model_11791.pt
 ```
 
 Why:
@@ -1001,7 +1001,7 @@ This was a strong checkpoint. Torso signed bias was essentially gone. Remaining 
 Use this as the default V1 reproduction checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/model_11791.pt
 ```
 
 The trained USD is:
@@ -1030,7 +1030,7 @@ cd /media/rnyx/Tapioka/TPs/kbot-rl-loco3
 .venv/bin/python scripts/diagnostics/evaluate_checkpoint.py \
   --task Isaac-KBot-Forward-Flat-v0 \
   --headless \
-  --checkpoint logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt \
+  --checkpoint logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/model_11791.pt \
   --output_dir logs/rsl_rl/kbot_forward_flat/2026-05-19_v1_repro/diagnostics/model_11791_restored_articulation_30s \
   --video_length 1500
 ```
@@ -1060,7 +1060,7 @@ cd /media/rnyx/Tapioka/TPs/kbot-rl-loco3
 .venv/bin/python scripts/rsl_rl/play_trailing.py \
   --task Isaac-KBot-Forward-Flat-Play-v0 \
   --num_envs 1 \
-  --checkpoint logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt \
+  --checkpoint logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/model_11791.pt \
   --video_length 1500 \
   --headless
 ```
@@ -1068,17 +1068,17 @@ cd /media/rnyx/Tapioka/TPs/kbot-rl-loco3
 Current restored-articulation video:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-hud-model_11791-restored-articulation-current-overlay.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-hud-model_11791-restored-articulation-current-overlay.mp4
 ```
 
-Note: `play_trailing.py` currently requires the full checkpoint path for this workflow; `--load_run 2026-04-29_06-29-05 --checkpoint model_11791.pt` did not resolve the file in this reproduction pass.
+Note: `play_trailing.py` currently requires the full checkpoint path for this workflow; `--load_run 2026-04-29_06-29-05_z.(2.1.1)3.(1)3 --checkpoint model_11791.pt` did not resolve the file in this reproduction pass.
 
 ### Branch I: Final Sole-Contact Push
 
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47/model_11990.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47_z.(2.1.1)3.(1)4/model_11990.pt
 ```
 
 Why:

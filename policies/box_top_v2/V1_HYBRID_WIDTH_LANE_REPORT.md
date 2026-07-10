@@ -59,7 +59,7 @@ If V1 hybrid improves width/lane behavior but still preserves V1's crouched/fast
 Parent checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/model_11791.pt
 ```
 
 Hybrid inference on the parent reproduced the restored V1 gait exactly. The hybrid reward changes do not affect fixed-policy inference, as expected. The parent still walks well but is narrow:
@@ -80,7 +80,7 @@ approved_step_fraction = 0.9926
 Fine-tune run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-19_14-21-50_v1_hybrid_width_lane_from_11791
+logs/rsl_rl/kbot_forward_flat/2026-05-19_14-21-50_z.(2.1.1)3.(1)3.B4
 ```
 
 Training was stable for the 200-iteration pass: full 400-step episodes and timeout-only terminations. The width and lane reward terms improved during training, but the later checkpoints traded that improvement for lateral drift. The current keeper is `model_11850.pt`, not the final checkpoint.
@@ -99,7 +99,7 @@ Interpretation: the hybrid fine tune can widen V1, but continuing too far lets l
 Keeper video:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-19_14-21-50_v1_hybrid_width_lane_from_11791/videos/play/trailing-hud-model_11850-v1-hybrid-width-lane.mp4
+logs/rsl_rl/kbot_forward_flat/2026-05-19_14-21-50_z.(2.1.1)3.(1)3.B4/videos/play/trailing-hud-model_11850-v1-hybrid-width-lane.mp4
 ```
 
 Do not promote `11900+` from this branch unless a later correction keeps the added width while bringing lateral drift back down. A next attempt should either stop near `11850` and reduce width pressure, or add a stronger straightness-preserving term before pushing `fsep` closer to `0.3164 m`.
@@ -109,7 +109,7 @@ Do not promote `11900+` from this branch unless a later correction keeps the add
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-19_14-51-24_v1_hybrid_width_lane_continue_from_11850
+logs/rsl_rl/kbot_forward_flat/2026-05-19_14-51-24_z.(2.1.1)3.(1)3.B4.1
 ```
 
 This continuation did not add new gait shaping. It kept the same hybrid width/lane rewards and let the policy try to recover `y=0` behavior using the existing V1 straightness pressure:
@@ -136,7 +136,7 @@ Interpretation: `model_11900.pt` was a transient failure, but the final checkpoi
 Video:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-19_14-51-24_v1_hybrid_width_lane_continue_from_11850/videos/play/trailing-hud-model_11999-v1-hybrid-width-lane.mp4
+logs/rsl_rl/kbot_forward_flat/2026-05-19_14-51-24_z.(2.1.1)3.(1)3.B4.1/videos/play/trailing-hud-model_11999-v1-hybrid-width-lane.mp4
 ```
 
 Next decision: review the `11999` video. If the path drift is visually acceptable, continue from `11999` with the same reward first. If it starts walking sideways or arcing, add `root_lateral_position_l2` to the hybrid config with a conservative weight before increasing width pressure further.

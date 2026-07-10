@@ -228,9 +228,30 @@ def _print_done_summary(
 ) -> None:
     checkpoint = run_dir / f"model_{to_iter}.pt"
     timestamp = _run_timestamp(run_dir)
-    graph_path = run_dir / "graficos" / f"{timestamp}_combined_reward_components.png" if timestamp else None
-    legend_path = run_dir / "graficos" / f"{timestamp}_reward_components_legend.png" if timestamp else None
-    csv_path = run_dir / "metricas" / f"{timestamp}_reward_components.csv" if timestamp else None
+    graph_path = _first_existing(
+        run_dir / "graficos",
+        [
+            f"{run_dir.name}_combined_reward_components.png",
+            f"{timestamp}_combined_reward_components.png" if timestamp else "",
+            "*_combined_reward_components.png",
+        ],
+    )
+    legend_path = _first_existing(
+        run_dir / "graficos",
+        [
+            f"{run_dir.name}_reward_components_legend.png",
+            f"{timestamp}_reward_components_legend.png" if timestamp else "",
+            "*_reward_components_legend.png",
+        ],
+    )
+    csv_path = _first_existing(
+        run_dir / "metricas",
+        [
+            f"{run_dir.name}_reward_components.csv",
+            f"{timestamp}_reward_components.csv" if timestamp else "",
+            "*_reward_components.csv",
+        ],
+    )
     video_path = Path(_command_arg(video_command, "--output")) if video_command is not None else None
     metrics_path = Path(_command_arg(video_command, "--metrics_output")) if video_command is not None else None
 
@@ -253,6 +274,17 @@ def _print_done_summary(
     if video_path is not None:
         message = f"{message}\n{video_path.name}"
     _notify("KTR complete", message, enabled=notify)
+
+
+def _first_existing(directory: Path, patterns: list[str]) -> Path | None:
+    for pattern in patterns:
+        if not pattern:
+            continue
+        matches = sorted(directory.glob(pattern))
+        for match in matches:
+            if match.is_file():
+                return match
+    return None
 
 
 def _confirm_or_cancel(commands: list[list[str]], *, yes: bool, dry_run: bool) -> None:
@@ -289,6 +321,10 @@ def _build_train_command(
     policy_only_resume: bool,
 ) -> list[str]:
     max_iterations = to_iter - from_iter + 1
+    # IsaacLab resolves load_run/checkpoint as regex patterns; KTR passes exact
+    # directory names, so escape compact lineage codes like K1.L22.(1)3.
+    load_run_pattern = re.escape(seed.load_run)
+    checkpoint_pattern = re.escape(seed.checkpoint)
     command = [
         str(python),
         "scripts/rsl_rl/train.py",
@@ -298,9 +334,9 @@ def _build_train_command(
         str(num_envs),
         "--resume",
         "--load_run",
-        seed.load_run,
+        load_run_pattern,
         "--checkpoint",
-        seed.checkpoint,
+        checkpoint_pattern,
         "--max_iterations",
         str(max_iterations),
         "--save_interval",

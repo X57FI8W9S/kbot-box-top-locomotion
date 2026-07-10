@@ -9,7 +9,7 @@ V3 starts from the reward topology that produced the V2.5 `model_648.pt`
 checkpoint:
 
 ```text
-source run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_v2_5_pose_gait_quality_from_v2_5_349_fsep_ksep
+source run = logs/rsl_rl/kbot_forward_flat/2026-05-09_00-16-45_H9.1
 source checkpoint = model_648.pt
 source-compatible task = Isaac-KBot-Forward-Flat-V2_5-PoseGaitQuality648Compat-v0
 ```

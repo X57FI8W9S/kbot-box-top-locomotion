@@ -258,15 +258,15 @@ after `0.30 s` of air time for that foot under the current schedule.
 
 | Run | Parent | Checkpoint | Key change | Result |
 |---|---|---:|---|---|
-| `2026-05-31_21-14-35_v3_speed075_step060_clearance_overtake030_w100_from_200_to_300_save25` | earlier V3 speed/step branch | 300 | Useful parent with clearance and overtake pressure | Selected as the current V3 branching point |
-| `2026-06-02_03-04-18_v3_speed075_step060_centerline_heading_gate_from_20260531_211435_m300_to_800_save25_20260602` | model 300 | 800 | Added centerline and heading gates | Stable, speed mean 0.369 m/s, final x 10.95 m, final y -1.20 m, APV 100%, J/m 95.3 |
-| `2026-06-02_04-10-47_v3_centerline_heading_gate_continue_m800_to_2000_save25_20260602` | model 800 | 2000 | Continued the wider-gate branch | Stable and fast, speed mean 0.664 m/s, final x 18.80 m, but final y -5.34 m, so not acceptable |
-| `2026-06-02_05-00-34_v3_tight_gauss_from_20260531_211435_m300_to_800_save25_20260602` | model 300 | 800 | Tightened Gaussian gates to `0.0025` and `0.01` | Stable and centered, final y -0.052 m and fsep 0.312 m, but speed collapsed to 0.0105 m/s mean and J/m rose to 1975 |
-| `2026-06-04_01-15-49_v3_dense_target_location_from_300_to_800_save25_20260604` | model 300 | killed | First target-location launch used the wrong iteration count and would have continued past 800 | Killed; keep only as provenance |
-| `2026-06-04_01-20-16_v3_dense_target_location_from_300_to_800_save25_corrected_20260604` | model 300 | 799 | Disabled dense step length, added target foot location and stance retreat penalty | Stable training, but `dense_swing_foot_target_location_exp` stayed near zero; final training log only reached about 0.0005 |
-| `2026-06-04_01-33-56_v3_dense_target_location_m799_to_800_20260604` | corrected model 799 | 800 | Tiny continuation to produce exact `model_800.pt` | Stable video, no falls, final x 10.22 m, final y 0.44 m, speed mean 0.344 m/s, APV 60%, J/m 85.6 |
-| `2026-06-04_09-05-58_v3_weights_vclip15_swing40_target500_4096envs_from_20260531_211435_m300_to_800_save25_20260604` | model 300 | 799 | 4096 envs; lowered forward weights to 15, raised swing speed to 40, raised target location to 500, added swing-speed sole track and half first target | Failed. Scalar reward rose, but final training had mean episode length 36.36, `track_lin_vel_xy_exp=0`, `bad_orientation=0.9985`, and target-location reward about 100.44 |
-| `2026-06-04_09-18-59_v3_weights_vclip15_swing40_target500_4096envs_from_20260604_090558_m799_to_800_materialize` | 09:05 model 799 | 800 | Tiny continuation to produce exact `model_800.pt` | Video confirms no walking: final x 0.064 m, final y 0.245 m, speed mean 0.068 m/s, APV 10%, J/m 9475 |
+| `2026-05-31_21-14-35_I8.1.3` | earlier V3 speed/step branch | 300 | Useful parent with clearance and overtake pressure | Selected as the current V3 branching point |
+| `2026-06-02_03-04-18_I8.1.3.11` | model 300 | 800 | Added centerline and heading gates | Stable, speed mean 0.369 m/s, final x 10.95 m, final y -1.20 m, APV 100%, J/m 95.3 |
+| `2026-06-02_04-10-47_I8.1.3.11.1` | model 800 | 2000 | Continued the wider-gate branch | Stable and fast, speed mean 0.664 m/s, final x 18.80 m, but final y -5.34 m, so not acceptable |
+| `2026-06-02_05-00-34_I8.1.3.12` | model 300 | 800 | Tightened Gaussian gates to `0.0025` and `0.01` | Stable and centered, final y -0.052 m and fsep 0.312 m, but speed collapsed to 0.0105 m/s mean and J/m rose to 1975 |
+| `2026-06-04_01-15-49_I8.1.3.22` | model 300 | killed | First target-location launch used the wrong iteration count and would have continued past 800 | Killed; keep only as provenance |
+| `2026-06-04_01-20-16_I8.1.3.23` | model 300 | 799 | Disabled dense step length, added target foot location and stance retreat penalty | Stable training, but `dense_swing_foot_target_location_exp` stayed near zero; final training log only reached about 0.0005 |
+| `2026-06-04_01-33-56_I8.1.3.23.1` | corrected model 799 | 800 | Tiny continuation to produce exact `model_800.pt` | Stable video, no falls, final x 10.22 m, final y 0.44 m, speed mean 0.344 m/s, APV 60%, J/m 85.6 |
+| `2026-06-04_09-05-58_I8.1.3.32` | model 300 | 799 | 4096 envs; lowered forward weights to 15, raised swing speed to 40, raised target location to 500, added swing-speed sole track and half first target | Failed. Scalar reward rose, but final training had mean episode length 36.36, `track_lin_vel_xy_exp=0`, `bad_orientation=0.9985`, and target-location reward about 100.44 |
+| `2026-06-04_09-18-59_I8.1.3.32.1` | 09:05 model 799 | 800 | Tiny continuation to produce exact `model_800.pt` | Video confirms no walking: final x 0.064 m, final y 0.245 m, speed mean 0.068 m/s, APV 10%, J/m 9475 |
 
 ## Latest Tight-Gate Metrics
 
@@ -430,53 +430,53 @@ V3 report:
 policies/box_top_v3/V3_REPORT.md
 
 latest tight-gate run:
-logs/rsl_rl/kbot_forward_flat/2026-06-02_05-00-34_v3_tight_gauss_from_20260531_211435_m300_to_800_save25_20260602
+logs/rsl_rl/kbot_forward_flat/2026-06-02_05-00-34_I8.1.3.12
 
 tight-gate video JSON:
-logs/rsl_rl/kbot_forward_flat/2026-06-02_05-00-34_v3_tight_gauss_from_20260531_211435_m300_to_800_save25_20260602/videos/play/trailing-hud-model_800-v3-tight-gauss-from-m300-to-800-30s.json
+logs/rsl_rl/kbot_forward_flat/2026-06-02_05-00-34_I8.1.3.12/videos/play/trailing-hud-model_800-v3-tight-gauss-from-m300-to-800-30s.json
 
 fast but drifting continuation:
-logs/rsl_rl/kbot_forward_flat/2026-06-02_04-10-47_v3_centerline_heading_gate_continue_m800_to_2000_save25_20260602
+logs/rsl_rl/kbot_forward_flat/2026-06-02_04-10-47_I8.1.3.11.1
 
 fast but drifting video JSON:
-logs/rsl_rl/kbot_forward_flat/2026-06-02_04-10-47_v3_centerline_heading_gate_continue_m800_to_2000_save25_20260602/videos/play/trailing-hud-model_2000-v3-centerline-heading-gate-from-m800-to-2000-30s.json
+logs/rsl_rl/kbot_forward_flat/2026-06-02_04-10-47_I8.1.3.11.1/videos/play/trailing-hud-model_2000-v3-centerline-heading-gate-from-m800-to-2000-30s.json
 
 target-location corrected run:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_01-20-16_v3_dense_target_location_from_300_to_800_save25_corrected_20260604
+logs/rsl_rl/kbot_forward_flat/2026-06-04_01-20-16_I8.1.3.23
 
 target-location exact model_800 run:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_v3_dense_target_location_m799_to_800_20260604
+logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_I8.1.3.23.1
 
 target-location model_800 video:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_v3_dense_target_location_m799_to_800_20260604/videos/play/trailing-hud-model_800-v3-dense-target-location-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_I8.1.3.23.1/videos/play/trailing-hud-model_800-v3-dense-target-location-30s.mp4
 
 target-location model_800 video JSON:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_v3_dense_target_location_m799_to_800_20260604/videos/play/trailing-hud-model_800-v3-dense-target-location-30s.json
+logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_I8.1.3.23.1/videos/play/trailing-hud-model_800-v3-dense-target-location-30s.json
 
 target-location corrected reward graph:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_01-20-16_v3_dense_target_location_from_300_to_800_save25_corrected_20260604/graficos/2026-06-04_01-20-16_combined_reward_components.png
+logs/rsl_rl/kbot_forward_flat/2026-06-04_01-20-16_I8.1.3.23/graficos/2026-06-04_01-20-16_combined_reward_components.png
 
 target-location exact model_800 reward graph:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_v3_dense_target_location_m799_to_800_20260604/graficos/2026-06-04_01-33-56_combined_reward_components.png
+logs/rsl_rl/kbot_forward_flat/2026-06-04_01-33-56_I8.1.3.23.1/graficos/2026-06-04_01-33-56_combined_reward_components.png
 
 changed-weight 4096-env main run:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_v3_weights_vclip15_swing40_target500_4096envs_from_20260531_211435_m300_to_800_save25_20260604
+logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_I8.1.3.32
 
 changed-weight exact model_800 run:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_09-18-59_v3_weights_vclip15_swing40_target500_4096envs_from_20260604_090558_m799_to_800_materialize
+logs/rsl_rl/kbot_forward_flat/2026-06-04_09-18-59_I8.1.3.32.1
 
 changed-weight model_800:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_09-18-59_v3_weights_vclip15_swing40_target500_4096envs_from_20260604_090558_m799_to_800_materialize/model_800.pt
+logs/rsl_rl/kbot_forward_flat/2026-06-04_09-18-59_I8.1.3.32.1/model_800.pt
 
 changed-weight model_800 video:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_v3_weights_vclip15_swing40_target500_4096envs_from_20260531_211435_m300_to_800_save25_20260604/videos/play/trailing-hud-model_800-v3-weights-vclip15-swing40-target500-4096envs-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_I8.1.3.32/videos/play/trailing-hud-model_800-v3-weights-vclip15-swing40-target500-4096envs-30s.mp4
 
 changed-weight model_800 video JSON:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_v3_weights_vclip15_swing40_target500_4096envs_from_20260531_211435_m300_to_800_save25_20260604/videos/play/trailing-hud-model_800-v3-weights-vclip15-swing40-target500-4096envs-30s.json
+logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_I8.1.3.32/videos/play/trailing-hud-model_800-v3-weights-vclip15-swing40-target500-4096envs-30s.json
 
 changed-weight reward graph:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_v3_weights_vclip15_swing40_target500_4096envs_from_20260531_211435_m300_to_800_save25_20260604/graficos/2026-06-04_09-05-58_combined_reward_components.png
+logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_I8.1.3.32/graficos/2026-06-04_09-05-58_combined_reward_components.png
 
 changed-weight reward CSV:
-logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_v3_weights_vclip15_swing40_target500_4096envs_from_20260531_211435_m300_to_800_save25_20260604/metricas/2026-06-04_09-05-58_reward_components.csv
+logs/rsl_rl/kbot_forward_flat/2026-06-04_09-05-58_I8.1.3.32/metricas/2026-06-04_09-05-58_reward_components.csv
 ```

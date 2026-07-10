@@ -334,7 +334,13 @@ def _collect_runs(log_root: Path, runs_csv: Path, wide_csv: Path, extra_runs: li
         agent_data = _load_agent_yaml(run_dir)
         ktr_metadata = _load_ktr_metadata(run_dir)
         from_iter, to_iter = _infer_iteration_range(agent_data)
+        if ktr_metadata:
+            from_iter = ktr_metadata.get("from_iter", from_iter)
+            to_iter = ktr_metadata.get("to_iter", to_iter)
         version = str(ktr_metadata.get("version") or _infer_version(run_name))
+        load_run = str(ktr_metadata.get("load_run") or agent_data.get("load_run", ""))
+        load_checkpoint = str(ktr_metadata.get("load_checkpoint") or agent_data.get("load_checkpoint", ""))
+        resume = bool(ktr_metadata.get("load_run") or agent_data.get("resume", False))
         try:
             data = yaml.unsafe_load(env_yaml.read_text())
         except Exception as exc:
@@ -356,9 +362,9 @@ def _collect_runs(log_root: Path, runs_csv: Path, wide_csv: Path, extra_runs: li
                 "timestamp": _timestamp_from_name(run_name),
                 "version": version,
                 "version_letter": _version_letter(version),
-                "resume": bool(agent_data.get("resume", False)),
-                "load_run": agent_data.get("load_run", ""),
-                "load_checkpoint": agent_data.get("load_checkpoint", ""),
+                "resume": resume,
+                "load_run": load_run,
+                "load_checkpoint": load_checkpoint,
                 "from_iter": from_iter,
                 "to_iter": to_iter,
                 "run_dir": rel_run_dir,

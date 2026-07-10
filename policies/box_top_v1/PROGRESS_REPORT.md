@@ -16,14 +16,14 @@ Baseline hip roll/yaw RMS mean: 0.10818 -> target 0.011-0.022 rad
 Current reference checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15/model_10300.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15_z.2.1.1/model_10300.pt
 ```
 
 Reference videos:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15/videos/play/trailing-hud-model_10300-60s.mp4
-logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15/videos/play/trailing-hud-model_10300-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15_z.2.1.1/videos/play/trailing-hud-model_10300-60s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_01-57-15_z.2.1.1/videos/play/trailing-hud-model_10300-30s.mp4
 ```
 
 The HUD now shows paired left/right joint positions by joint type, plus 3 second rolling `torso rms` and `hip ry rms`.
@@ -64,7 +64,7 @@ PROGRESS_REPORT.md
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_03-46-31
+logs/rsl_rl/kbot_forward_flat/2026-04-27_03-46-31_z.2.(1)3
 ```
 
 Saved checkpoints:
@@ -78,7 +78,7 @@ model_10449.pt
 First candidate video:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_03-46-31/videos/play/trailing-hud-model_10449-60s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_03-46-31_z.2.(1)3/videos/play/trailing-hud-model_10449-60s.mp4
 ```
 
 Quick sampled-frame note:
@@ -121,14 +121,14 @@ Additional config changes applied after Branch A:
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27_z.2.1.1.2
 ```
 
 Candidate:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27/model_10599.pt
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27/videos/play/trailing-hud-model_10599-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27_z.2.1.1.2/model_10599.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-06-27_z.2.1.1.2/videos/play/trailing-hud-model_10599-30s.mp4
 outputs/gait_metrics/branch_b_model_10599_30s.json
 ```
 
@@ -160,14 +160,14 @@ Additional config changes after Branch B:
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47_z.2.1.1.2.1
 ```
 
 Candidate:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47/model_10798.pt
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47/videos/play/trailing-hud-model_10798-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47_z.2.1.1.2.1/model_10798.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-11-47_z.2.1.1.2.1/videos/play/trailing-hud-model_10798-30s.mp4
 outputs/gait_metrics/branch_c_model_10798_30s.json
 ```
 
@@ -194,14 +194,14 @@ Continue from `model_10798.pt` with the same slower command range and stronger t
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45_z.(2.1.1)2
 ```
 
 Candidate:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45/model_10997.pt
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45/videos/play/trailing-hud-model_10997-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45_z.(2.1.1)2/model_10997.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-15-45_z.(2.1.1)2/videos/play/trailing-hud-model_10997-30s.mp4
 outputs/gait_metrics/branch_c_cont_model_10997_30s.json
 ```
 
@@ -228,14 +228,14 @@ Continue from `model_10997.pt` without changing rewards.
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-21-18
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-21-18_z.(2.1.1)2.1
 ```
 
 Candidate:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-21-18/model_11096.pt
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-21-18/videos/play/trailing-hud-model_11096-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-21-18_z.(2.1.1)2.1/model_11096.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-21-18_z.(2.1.1)2.1/videos/play/trailing-hud-model_11096-30s.mp4
 outputs/gait_metrics/branch_c_cont2_model_11096_30s.json
 ```
 
@@ -269,14 +269,14 @@ Additional config changes after Branch C:
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25_z.2.(1.1.2)2
 ```
 
 Candidate:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25/model_11096.pt
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25/videos/play/trailing-hud-model_11096-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25_z.2.(1.1.2)2/model_11096.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-25-25_z.2.(1.1.2)2/videos/play/trailing-hud-model_11096-30s.mp4
 outputs/gait_metrics/branch_d_model_11096_30s.json
 ```
 
@@ -303,14 +303,14 @@ Check whether Branch D keeps improving with one more short continuation.
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53_z.2.1.(1.2.1)2
 ```
 
 Candidate:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53/model_11195.pt
-logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53/videos/play/trailing-hud-model_11195-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53_z.2.1.(1.2.1)2/model_11195.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_04-28-53_z.2.1.(1.2.1)2/videos/play/trailing-hud-model_11195-30s.mp4
 outputs/gait_metrics/branch_d_cont_model_11195_30s.json
 ```
 
@@ -343,8 +343,8 @@ Code/config changes:
 Runs:
 
 ```text
-fresh phase run: logs/rsl_rl/kbot_forward_flat/2026-04-27_11-09-21
-warm-start phase run: logs/rsl_rl/kbot_forward_flat/2026-04-27_11-12-07
+fresh phase run: logs/rsl_rl/kbot_forward_flat/2026-04-27_11-09-21_X23
+warm-start phase run: logs/rsl_rl/kbot_forward_flat/2026-04-27_11-12-07_z.(2.1.1)3
 ```
 
 Result:
@@ -358,7 +358,7 @@ Result:
 Candidate to evaluate after GPU recovery:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_11-12-07/model_11294.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-27_11-12-07_z.(2.1.1)3/model_11294.pt
 outputs/gait_metrics/branch_e_phase_model_11294_30s.json
 ```
 
@@ -382,7 +382,7 @@ Status:
 Next command once GPU is usable:
 
 ```text
-.venv/bin/python scripts/rsl_rl/train.py --task Isaac-KBot-Forward-Flat-v0 --headless --num_envs 2048 --resume --load_run 2026-04-27_11-12-07 --checkpoint model_11294.pt --max_iterations 100
+.venv/bin/python scripts/rsl_rl/train.py --task Isaac-KBot-Forward-Flat-v0 --headless --num_envs 2048 --resume --load_run 2026-04-27_11-12-07_z.(2.1.1)3 --checkpoint model_11294.pt --max_iterations 100
 ```
 
 ## Branch G: Straight-Posture Ramp 1
@@ -417,17 +417,17 @@ Code/config changes:
 Runs:
 
 ```text
-ramp 1: logs/rsl_rl/kbot_forward_flat/2026-04-27_17-42-57/model_11393.pt
-ramp 1 continuation: logs/rsl_rl/kbot_forward_flat/2026-04-27_17-46-04/model_11492.pt
+ramp 1: logs/rsl_rl/kbot_forward_flat/2026-04-27_17-42-57_z.(2.1.1)3.1/model_11393.pt
+ramp 1 continuation: logs/rsl_rl/kbot_forward_flat/2026-04-27_17-46-04_z.(2.1.1)3.1.1/model_11492.pt
 ```
 
 Videos and metrics:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-27_17-42-57/videos/play/trailing-hud-model_11393-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_17-42-57_z.(2.1.1)3.1/videos/play/trailing-hud-model_11393-30s.mp4
 outputs/gait_metrics/branch_g_ramp1_model_11393_30s.json
 
-logs/rsl_rl/kbot_forward_flat/2026-04-27_17-46-04/videos/play/trailing-hud-model_11492-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-27_17-46-04_z.(2.1.1)3.1.1/videos/play/trailing-hud-model_11492-30s.mp4
 outputs/gait_metrics/branch_g_ramp1_cont_model_11492_30s.json
 ```
 
@@ -473,27 +473,27 @@ Code/config changes:
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/model_11791.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/model_11791.pt
 ```
 
 Resume command:
 
 ```text
-.venv/bin/python scripts/rsl_rl/train.py --task Isaac-KBot-Forward-Flat-v0 --headless --num_envs 1024 --max_iterations 300 --resume --load_run 2026-04-27_17-46-04 --checkpoint model_11492.pt
+.venv/bin/python scripts/rsl_rl/train.py --task Isaac-KBot-Forward-Flat-v0 --headless --num_envs 1024 --max_iterations 300 --resume --load_run 2026-04-27_17-46-04_z.(2.1.1)3.1.1 --checkpoint model_11492.pt
 ```
 
 Videos and metrics:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-hud-model_11791.mp4
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-hud-model_11791-side.mp4
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-hud-model_11791-metrics.json
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-side-hud-model_11791.mp4
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-side-hud-model_11791-metrics.json
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-side-hud-model_11791-16x9.mp4
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-side-hud-model_11791-16x9-metrics.json
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-side-hud-model_11791-final.mp4
-logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05/videos/play/trailing-side-hud-model_11791-final.metrics.json
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-hud-model_11791.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-hud-model_11791-side.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-hud-model_11791-metrics.json
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-side-hud-model_11791.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-side-hud-model_11791-metrics.json
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-side-hud-model_11791-16x9.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-side-hud-model_11791-16x9-metrics.json
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-side-hud-model_11791-final.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-29_06-29-05_z.(2.1.1)3.(1)3/videos/play/trailing-side-hud-model_11791-final.metrics.json
 ```
 
 Playback script correction:
@@ -535,20 +535,20 @@ Code/config changes:
 Run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47/model_11990.pt
+logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47_z.(2.1.1)3.(1)4/model_11990.pt
 ```
 
 Resume command:
 
 ```text
-.venv/bin/python scripts/rsl_rl/train.py --task Isaac-KBot-Forward-Flat-v0 --headless --num_envs 1024 --max_iterations 200 --resume --load_run 2026-04-29_06-29-05 --checkpoint model_11791.pt
+.venv/bin/python scripts/rsl_rl/train.py --task Isaac-KBot-Forward-Flat-v0 --headless --num_envs 1024 --max_iterations 200 --resume --load_run 2026-04-29_06-29-05_z.(2.1.1)3.(1)3 --checkpoint model_11791.pt
 ```
 
 Video and metrics:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47/videos/play/trailing-side-hud-model_11990-30s.mp4
-logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47/videos/play/trailing-side-hud-model_11990-30s.metrics.json
+logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47_z.(2.1.1)3.(1)4/videos/play/trailing-side-hud-model_11990-30s.mp4
+logs/rsl_rl/kbot_forward_flat/2026-04-29_07-58-47_z.(2.1.1)3.(1)4/videos/play/trailing-side-hud-model_11990-30s.metrics.json
 ```
 
 30 second metric result:

@@ -20,9 +20,21 @@ import numpy as np
 
 REWARD_PREFIX = "Episode_Reward/"
 OUTPUT_DPI = 180
+COMBINED_OUTPUT_DPI = 240
 STACK_ALPHA = 0.94
 SUBPIXEL_BAND_THRESHOLD_PX = 1.0
-FIGSIZE = (18, 9)
+FIGSIZE = (16, 9)
+LEGEND_COLUMNS = 8
+LEGEND_FONT_SIZE = 7.6
+LEGEND_ANCHOR = (0.484, 0.4416)
+COMBINED_GRID_KWARGS = {
+    "height_ratios": [0.81, 0.19],
+    "left": 0.045,
+    "right": 0.985,
+    "top": 0.965,
+    "bottom": 0.020,
+    "hspace": 0.097,
+}
 
 
 def _vanimo_colormap():
@@ -144,7 +156,9 @@ def _export_px_per_reward_unit(
     title: str,
 ) -> float:
     """Estimate final PNG y pixels per reward unit for the current autoscale."""
-    fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
+    fig = plt.figure(figsize=FIGSIZE, dpi=COMBINED_OUTPUT_DPI, constrained_layout=False)
+    grid = fig.add_gridspec(nrows=2, ncols=1, **COMBINED_GRID_KWARGS)
+    ax = fig.add_subplot(grid[0])
 
     if positive_stack is not None:
         base = np.zeros_like(iterations, dtype=np.float64)
@@ -163,7 +177,7 @@ def _export_px_per_reward_unit(
     _style_axes(ax, title)
     fig.canvas.draw()
     ylim = ax.get_ylim()
-    axes_height_export_px = ax.get_window_extent().height * (OUTPUT_DPI / fig.dpi)
+    axes_height_export_px = ax.get_window_extent().height
     plt.close(fig)
     return axes_height_export_px / (ylim[1] - ylim[0])
 
@@ -238,7 +252,11 @@ def _plot_stack(
         subpixel_threshold_px=subpixel_threshold_px,
     )
 
-    fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
+    fig = plt.figure(figsize=FIGSIZE, dpi=COMBINED_OUTPUT_DPI, constrained_layout=False)
+    grid = fig.add_gridspec(nrows=2, ncols=1, **COMBINED_GRID_KWARGS)
+    ax = fig.add_subplot(grid[0])
+    legend_ax = fig.add_subplot(grid[1])
+    legend_ax.axis("off")
     legend_entries: list[tuple[str, object]] = []
 
     if positive_stack is not None:
@@ -261,15 +279,33 @@ def _plot_stack(
     legend_entries.append(("total", Line2D([0], [0], color="black", linewidth=3.0)))
     ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.8)
     _style_axes(ax, title)
+    ax.tick_params(axis="both", labelsize=8)
+    ax.title.set_fontsize(11)
+    ax.xaxis.label.set_fontsize(9)
+    ax.yaxis.label.set_fontsize(9)
     labels = [label for label, _handle in legend_entries]
     handles = [handle for _label, handle in legend_entries]
+    legend_ax.legend(
+        handles,
+        labels,
+        loc="center",
+        bbox_to_anchor=LEGEND_ANCHOR,
+        ncol=LEGEND_COLUMNS,
+        frameon=False,
+        fontsize=LEGEND_FONT_SIZE,
+        handlelength=1.25,
+        handletextpad=0.22,
+        columnspacing=0.42,
+        borderaxespad=0.0,
+        labelspacing=0.55,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=OUTPUT_DPI, bbox_inches="tight")
+    fig.savefig(output_path)
     plt.close(fig)
 
     legend_path.parent.mkdir(parents=True, exist_ok=True)
-    column_count = min(6, max(1, int(np.ceil(len(labels) / 12))))
+    column_count = min(LEGEND_COLUMNS, max(1, int(np.ceil(len(labels) / 12))))
     legend_height = max(2.0, 0.34 * int(np.ceil(len(labels) / column_count)) + 0.5)
     legend_fig = plt.figure(figsize=(18, legend_height))
     legend_fig.legend(
@@ -278,7 +314,7 @@ def _plot_stack(
         loc="center",
         ncol=column_count,
         frameon=False,
-        fontsize="small",
+        fontsize=LEGEND_FONT_SIZE,
     )
     legend_fig.savefig(legend_path, dpi=OUTPUT_DPI, bbox_inches="tight")
     plt.close(legend_fig)

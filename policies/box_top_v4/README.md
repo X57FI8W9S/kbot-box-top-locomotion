@@ -28,7 +28,7 @@ the policy leaning/falling forward to collect forward velocity reward.
 Failed V4 run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-06-22_12-28-34_v4_top4_soletrack_4096envs_from_100_to_300_save25_20260622/model_300.pt
+logs/rsl_rl/kbot_forward_flat/2026-06-22_12-28-34_L3.1/model_300.pt
 ```
 
 Artifacts:
@@ -64,7 +64,7 @@ rollout / diagnostics:
 The useful May 31 reference checkpoint is:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-05-31_21-14-35_v3_speed075_step060_clearance_overtake030_w100_from_200_to_300_save25/model_300.pt
+logs/rsl_rl/kbot_forward_flat/2026-05-31_21-14-35_I8.1.3/model_300.pt
 ```
 
 Reference artifacts:
@@ -78,14 +78,14 @@ metricas/2026-05-31_21-14-35_reward_components.csv
 Lineage:
 
 ```text
-2026-05-31_03-42-10_v3_speed075_step060_upright_gate_oldfloors_repeat_from_zero_100iter
+2026-05-31_03-42-10_I8
   -> model_99.pt
 
-2026-05-31_03-56-23_v3_speed075_step060_upright_gate_oldfloors_continue_100_to_200_save25
+2026-05-31_03-56-23_I8.1
   resumed from 03:42 model_99.pt
   -> model_200.pt
 
-2026-05-31_21-14-35_v3_speed075_step060_clearance_overtake030_w100_from_200_to_300_save25
+2026-05-31_21-14-35_I8.1.3
   resumed from 03:56 model_200.pt
   changed foot_sagittal_separation_l1 weight -2 -> -4
   changed swing_foot_overtake_l1 weight -3 -> -100
@@ -333,20 +333,20 @@ the May 31 lineage when that checkpoint exists:
 
 ```text
 May 31 iteration 99/100 reference:
-  logs/rsl_rl/kbot_forward_flat/2026-05-31_03-42-10_v3_speed075_step060_upright_gate_oldfloors_repeat_from_zero_100iter/model_99.pt
+  logs/rsl_rl/kbot_forward_flat/2026-05-31_03-42-10_I8/model_99.pt
 
 May 31 iteration 200 reference:
-  logs/rsl_rl/kbot_forward_flat/2026-05-31_03-56-23_v3_speed075_step060_upright_gate_oldfloors_continue_100_to_200_save25/model_200.pt
+  logs/rsl_rl/kbot_forward_flat/2026-05-31_03-56-23_I8.1/model_200.pt
 
 May 31 iteration 300 reference:
-  logs/rsl_rl/kbot_forward_flat/2026-05-31_21-14-35_v3_speed075_step060_clearance_overtake030_w100_from_200_to_300_save25/model_300.pt
+  logs/rsl_rl/kbot_forward_flat/2026-05-31_21-14-35_I8.1.3/model_300.pt
 ```
 
 The latest accepted historical V4 checkpoint/video set is the zero-to-100
 rebalance run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-06-22_14-48-50_v4_0_top4_may31_rebalance_4096envs_zero_to_100_save25_20260622/model_100.pt
+logs/rsl_rl/kbot_forward_flat/2026-06-22_14-48-50_L5/model_100.pt
 
 videos/play/trailing-hud-model_100-v4_0-top4-may31-rebalance-30s.mp4
 videos/play/trailing-hud-model_100-v4_0-top4-may31-rebalance-30s.json
@@ -896,7 +896,7 @@ the foot is, but not whether it is too short, too long, inside, or outside.
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-06-19_15-19-33_v4_top4_starter_implicit_4096envs_zero_to_100_20260619
+logs/rsl_rl/kbot_forward_flat/2026-06-19_15-19-33_L2
 ```
 
 Training command:
@@ -974,7 +974,7 @@ videos.
 Training run:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-06-19_14-52-40_v4_top4_starter_explicit_4096envs_zero_to_100_20260619
+logs/rsl_rl/kbot_forward_flat/2026-06-19_14-52-40_L1
 ```
 
 Training command:

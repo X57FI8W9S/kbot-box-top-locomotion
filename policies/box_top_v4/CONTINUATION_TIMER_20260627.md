@@ -22,13 +22,13 @@ best viable checkpoint instead.
 Current active run when note was written:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-06-27_01-22-49_v4_top4_decim2_phase_latched_precycle0_from_m300_to_800_save25_20260627
+logs/rsl_rl/kbot_forward_flat/2026-06-27_01-22-49_K1.L11.1
 ```
 
 Source checkpoint:
 
 ```text
-logs/rsl_rl/kbot_forward_flat/2026-06-27_01-04-35_v4_top4_decim2_phase_latched_precycle0_from_v32m200_to_300_save25_20260627/model_300.pt
+logs/rsl_rl/kbot_forward_flat/2026-06-27_01-04-35_K1.L11/model_300.pt
 ```
 
 Active command:
@@ -39,7 +39,7 @@ Active command:
   --headless \
   --num_envs 4096 \
   --resume \
-  --load_run 2026-06-27_01-04-35_v4_top4_decim2_phase_latched_precycle0_from_v32m200_to_300_save25_20260627 \
+  --load_run 2026-06-27_01-04-35_K1.L11 \
   --checkpoint model_300.pt \
   --max_iterations 501 \
   --save_interval 25 \
